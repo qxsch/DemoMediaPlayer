@@ -1,0 +1,2 @@
+/* Application icon – embedded into the .exe by windres */
+1 ICON "icon.ico"
