@@ -26,6 +26,9 @@ Cross-compiled from Linux using Docker + mingw-w64.
 | **F**       | Seek forward 30 seconds |
 | **Left**    | Seek back 5 seconds     |
 | **Right**   | Seek forward 5 seconds  |
+| **Up**      | Speed +10% (max 300%)   |
+| **Down**    | Speed -10% (min 50%)    |
+| **0** / **Enter** | Speed reset to 100% |
 | **M**       | Toggle mute              |
 
 ---

@@ -14,6 +14,9 @@
  *   F         – Seek forward 30 s
  *   Left      – Seek back  5 s
  *   Right     – Seek forward 5 s
+ *   Up        – Increase speed by 10% (max 300%)
+ *   Down      – Decrease speed by 10% (min 50%)
+ *   0 / Enter – Reset speed to 100%
  */
 
 #include <windows.h>
@@ -41,6 +44,10 @@
 
 #define DMP_MAX_MONITORS 16
 #define MAX_PATH_BUF     4096
+
+#define SPEED_MIN        0.5
+#define SPEED_MAX        3.0
+#define SPEED_STEP       0.1
 
 /* Setup-dialog control IDs */
 #define IDC_FILE_EDIT    201
@@ -163,6 +170,38 @@ static char *to_utf8(const wchar_t *w)
     return buf;
 }
 
+static double clamp_speed(double speed)
+{
+    if (speed < SPEED_MIN) return SPEED_MIN;
+    if (speed > SPEED_MAX) return SPEED_MAX;
+    return speed;
+}
+
+static double normalize_speed_step(double speed)
+{
+    int tenths = (int)(speed * 10.0 + 0.5);
+    return (double)tenths / 10.0;
+}
+
+static void set_playback_speed(double speed)
+{
+    if (!g_mpv) return;
+    double clamped = clamp_speed(speed);
+    mpv_set_property(g_mpv, "speed", MPV_FORMAT_DOUBLE, &clamped);
+}
+
+static void change_playback_speed(double delta)
+{
+    if (!g_mpv) return;
+
+    double speed = 1.0;
+    if (mpv_get_property(g_mpv, "speed", MPV_FORMAT_DOUBLE, &speed) < 0)
+        speed = 1.0;
+
+    speed = normalize_speed_step(speed + delta);
+    set_playback_speed(speed);
+}
+
 /* Show a standard "Open File" dialog for media files. */
 static BOOL browse_file(HWND owner, wchar_t *buf, int buflen)
 {
@@ -270,6 +309,17 @@ static LRESULT CALLBACK player_proc(HWND hw, UINT msg,
             if (g_mpv) mpv_command_async(g_mpv, 0, cmd);
             return 0;
         }
+        case VK_UP:
+            change_playback_speed(SPEED_STEP);
+            return 0;
+        case VK_DOWN:
+            change_playback_speed(-SPEED_STEP);
+            return 0;
+        case '0':
+        case VK_NUMPAD0:
+        case VK_RETURN:
+            set_playback_speed(1.0);
+            return 0;
         case 'M': {
             const char *cmd[] = {"cycle", "mute", NULL};
             if (g_mpv) mpv_command_async(g_mpv, 0, cmd);
