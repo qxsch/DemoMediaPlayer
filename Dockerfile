@@ -64,6 +64,7 @@ RUN set -e; \
 WORKDIR /build
 COPY main.c .
 COPY app.rc .
+COPY app.manifest .
 COPY icon.ico .
 
 RUN set -e; . /opt/mpv.env; \
@@ -74,6 +75,7 @@ RUN set -e; . /opt/mpv.env; \
         -I"$MPV_INC" -L"$MPV_LIB" \
         -lmpv \
         -lcomdlg32 -luser32 -lgdi32 -lole32 -lshell32 \
+        -ldwmapi -lcomctl32 -luxtheme \
         -mwindows -municode \
         -O2 -s -static-libgcc; \
     echo ">>> Build OK"; \

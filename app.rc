@@ -1,2 +1,5 @@
 /* Application icon – embedded into the .exe by windres */
 1 ICON "icon.ico"
+
+/* Application manifest – visual styles, DPI awareness, OS compat */
+1 24 "app.manifest"
