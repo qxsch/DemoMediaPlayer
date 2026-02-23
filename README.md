@@ -1,4 +1,4 @@
-# <img src="playericon.png" width="48" height="32"> DemoMediaPlayer — Murphy-proof your live demos
+# <img src="playericon.png" width="48" height="32"> DemoMediaPlayer - Murphy-proof your live demos
 
 A minimal fullscreen media player for Windows, built with **C**, **libmpv**, and the **Win32 API**.  
 Cross-compiled from Linux using Docker + mingw-w64.
