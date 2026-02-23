@@ -9,7 +9,7 @@ Cross-compiled from Linux using Docker + mingw-w64.
 
 ## Features
 
-- **No player controls:** just the video, no progress bar or buttons that show up ( You can control the player with the keyboard to present at your own pace)
+- **No visual player controls:** just the video, no progress bar or buttons that show up ( You can control the player with the keyboard to present at your own pace)
 - **Setup dialog:** choose a video file and target display at launch
 - **Identify screens:** overlay big monitor numbers on every display for 5 seconds
 - **Command-line mode:** skip the dialog and go straight to fullscreen
