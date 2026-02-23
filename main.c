@@ -1269,6 +1269,9 @@ static void show_help(void)
         L"  F            Seek forward 30 seconds\r\n"
         L"  Left         Seek back 5 seconds\r\n"
         L"  Right        Seek forward 5 seconds\r\n"
+        L"  Up           Speed +10% (max 300%)\r\n"
+        L"  Down         Speed -10% (min 50%)\r\n"
+        L"  0 / Enter    Reset speed to 100%\r\n"
         L"  M            Toggle mute\r\n";
 
     /* Register a simple window class for the help dialog. */
