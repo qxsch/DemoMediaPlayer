@@ -126,6 +126,7 @@ static HFONT       g_title_font = NULL;
 static HFONT       g_label_font = NULL;
 static HWND        g_hover_btn  = NULL;
 static WNDPROC     g_orig_btn_proc = NULL;
+static UINT        g_setup_dpi  = 96;
 
 /* ================================================================== */
 /*  Monitor enumeration                                                */
@@ -200,6 +201,47 @@ static void change_playback_speed(double delta)
 
     speed = normalize_speed_step(speed + delta);
     set_playback_speed(speed);
+}
+
+/* ── Per-monitor DPI helpers ─────────────────────────────────── */
+
+static UINT get_window_dpi(HWND hwnd)
+{
+    typedef UINT (WINAPI *PFN_GetDpiForWindow)(HWND);
+    typedef UINT (WINAPI *PFN_GetDpiForSystem)(void);
+    static PFN_GetDpiForWindow pfnWnd;
+    static PFN_GetDpiForSystem pfnSys;
+    static BOOL resolved;
+    if (!resolved) {
+        HMODULE u32 = GetModuleHandleW(L"user32.dll");
+        if (u32) {
+            pfnWnd = (PFN_GetDpiForWindow)GetProcAddress(u32, "GetDpiForWindow");
+            pfnSys = (PFN_GetDpiForSystem)GetProcAddress(u32, "GetDpiForSystem");
+        }
+        resolved = TRUE;
+    }
+    if (hwnd && pfnWnd) return pfnWnd(hwnd);
+    if (pfnSys)         return pfnSys();
+    return 96;
+}
+
+static UINT get_monitor_dpi(HMONITOR hmon)
+{
+    typedef HRESULT (WINAPI *PFN_GetDpiForMonitor)(HMONITOR, int, UINT *, UINT *);
+    static PFN_GetDpiForMonitor pfn;
+    static BOOL resolved;
+    if (!resolved) {
+        HMODULE shcore = LoadLibraryW(L"shcore.dll");
+        if (shcore)
+            pfn = (PFN_GetDpiForMonitor)GetProcAddress(shcore, "GetDpiForMonitor");
+        resolved = TRUE;
+    }
+    if (pfn && hmon) {
+        UINT dpiX, dpiY;
+        if (SUCCEEDED(pfn(hmon, 0 /* MDT_EFFECTIVE_DPI */, &dpiX, &dpiY)))
+            return dpiX;
+    }
+    return get_window_dpi(NULL);
 }
 
 /* Show a standard "Open File" dialog for media files. */
@@ -598,6 +640,141 @@ static void subclass_btn(HWND btn)
     if (!g_orig_btn_proc) g_orig_btn_proc = old;
 }
 
+/* ── Setup DPI scaling ─────────────────────────────────────────── */
+
+static int sdpi(int x) { return MulDiv(x, (int)g_setup_dpi, 96); }
+
+static void setup_create_fonts(void)
+{
+    if (g_title_font) { DeleteObject(g_title_font); g_title_font = NULL; }
+    if (g_ui_font)    { DeleteObject(g_ui_font);    g_ui_font = NULL; }
+    if (g_label_font) { DeleteObject(g_label_font); g_label_font = NULL; }
+
+    g_title_font = CreateFontW(
+        -sdpi(22), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+        L"Segoe UI Variable Display");
+
+    g_ui_font = CreateFontW(
+        -sdpi(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+
+    g_label_font = CreateFontW(
+        -sdpi(12), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+}
+
+static BOOL CALLBACK destroy_children_cb(HWND child, LPARAM lp)
+{
+    (void)lp;
+    DestroyWindow(child);
+    return TRUE;
+}
+
+static void setup_build_ui(HWND hw, HINSTANCE hi)
+{
+    RECT cr;
+    GetClientRect(hw, &cr);
+    int cw  = cr.right;
+    int mx  = sdpi(32);
+    int ew  = cw - 2 * mx;
+    int gap = sdpi(12);
+    HWND c;
+    int y = sdpi(24);
+
+    /* ── App title ─────────────────────────────────────────── */
+    c = CreateWindowExW(0, L"STATIC", APP_TITLE,
+            WS_CHILD | WS_VISIBLE | SS_LEFT,
+            mx, y, ew, sdpi(28),
+            hw, (HMENU)(intptr_t)IDC_TITLE_LABEL, hi, NULL);
+    SendMessageW(c, WM_SETFONT, (WPARAM)g_title_font, TRUE);
+    y += sdpi(48);
+
+    /* ── Video File section ────────────────────────────────── */
+    c = CreateWindowExW(0, L"STATIC", L"VIDEO FILE",
+            WS_CHILD | WS_VISIBLE | SS_LEFT,
+            mx, y, ew, sdpi(16), hw, NULL, hi, NULL);
+    SendMessageW(c, WM_SETFONT, (WPARAM)g_label_font, TRUE);
+    y += sdpi(24);
+
+    int browse_w = sdpi(100);
+    int edit_w   = ew - browse_w - gap;
+
+    c = CreateWindowExW(0, L"EDIT", L"",
+            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_READONLY,
+            mx, y, edit_w, sdpi(34),
+            hw, (HMENU)(intptr_t)IDC_FILE_EDIT, hi, NULL);
+    SendMessageW(c, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+    SendMessageW(c, EM_SETMARGINS,
+                 EC_LEFTMARGIN | EC_RIGHTMARGIN,
+                 MAKELPARAM(sdpi(10), sdpi(10)));
+
+    c = CreateWindowExW(0, L"BUTTON", L"Browse\u2026",
+            WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+            mx + edit_w + gap, y, browse_w, sdpi(34),
+            hw, (HMENU)(intptr_t)IDC_BROWSE, hi, NULL);
+    SendMessageW(c, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+    subclass_btn(c);
+    y += sdpi(52);
+
+    /* ── Display section ───────────────────────────────────── */
+    c = CreateWindowExW(0, L"STATIC", L"DISPLAY",
+            WS_CHILD | WS_VISIBLE | SS_LEFT,
+            mx, y, ew, sdpi(16), hw, NULL, hi, NULL);
+    SendMessageW(c, WM_SETFONT, (WPARAM)g_label_font, TRUE);
+    y += sdpi(24);
+
+    c = CreateWindowExW(0, L"COMBOBOX", NULL,
+            WS_CHILD | WS_VISIBLE
+            | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED
+            | CBS_HASSTRINGS | WS_VSCROLL,
+            mx, y, ew, sdpi(240),
+            hw, (HMENU)(intptr_t)IDC_SCREEN_COMBO, hi, NULL);
+    SendMessageW(c, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+    for (int i = 0; i < g_nmons; i++)
+        SendMessageW(c, CB_ADDSTRING, 0, (LPARAM)g_mons[i].label);
+    SendMessageW(c, CB_SETCURSEL,
+                 (g_sel_screen >= 0 && g_sel_screen < g_nmons)
+                     ? g_sel_screen : 0, 0);
+    SetWindowTheme(c, L"DarkMode_CFD", NULL);
+    y += sdpi(50);
+
+    /* ── Muted checkbox ────────────────────────────────────── */
+    c = CreateWindowExW(0, L"BUTTON", L"Start muted",
+            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+            mx, y, ew, sdpi(24),
+            hw, (HMENU)(intptr_t)IDC_MUTED, hi, NULL);
+    SendMessageW(c, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+    SetWindowTheme(c, L"DarkMode_Explorer", NULL);
+    if (g_sel_muted)
+        SendMessageW(c, BM_SETCHECK, BST_CHECKED, 0);
+    y += sdpi(44);
+
+    /* ── Play + Identify buttons ───────────────────────────── */
+    int btn_w = (ew - gap) / 2;
+
+    c = CreateWindowExW(0, L"BUTTON", L"\u25B6  Play",
+            WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+            mx, y, btn_w, sdpi(42),
+            hw, (HMENU)(intptr_t)IDC_PLAY, hi, NULL);
+    SendMessageW(c, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+    subclass_btn(c);
+
+    c = CreateWindowExW(0, L"BUTTON", L"Identify Screens",
+            WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+            mx + btn_w + gap, y, ew - btn_w - gap, sdpi(42),
+            hw, (HMENU)(intptr_t)IDC_IDENTIFY, hi, NULL);
+    SendMessageW(c, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+    subclass_btn(c);
+
+    /* Show pre-set file path (from partial CLI args). */
+    if (g_sel_file[0])
+        SetDlgItemTextW(hw, IDC_FILE_EDIT, g_sel_file);
+}
+
 /* ================================================================== */
 /*  Setup dialog                                                       */
 /* ================================================================== */
@@ -615,121 +792,10 @@ static LRESULT CALLBACK setup_proc(HWND hw, UINT msg,
         g_br_bg    = CreateSolidBrush(CLR_BG);
         g_br_input = CreateSolidBrush(CLR_INPUT_BG);
 
-        /* Fonts */
-        g_title_font = CreateFontW(
-            -22, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-            L"Segoe UI Variable Display");
-
-        g_ui_font = CreateFontW(
-            -14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-
-        g_label_font = CreateFontW(
-            -12, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-
-        RECT cr;
-        GetClientRect(hw, &cr);
-        int cw = cr.right;
-        int mx = 32;                     /* horizontal margin */
-        int ew = cw - 2 * mx;           /* full-width element width */
-        HWND c;
-        int y = 24;
-
-        /* ── App title ─────────────────────────────────────────── */
-        c = CreateWindowExW(0, L"STATIC", APP_TITLE,
-                WS_CHILD | WS_VISIBLE | SS_LEFT,
-                mx, y, ew, 28,
-                hw, (HMENU)(intptr_t)IDC_TITLE_LABEL, hi, NULL);
-        SendMessageW(c, WM_SETFONT, (WPARAM)g_title_font, TRUE);
-        y += 48;
-
-        /* ── Video File section ────────────────────────────────── */
-        c = CreateWindowExW(0, L"STATIC", L"VIDEO FILE",
-                WS_CHILD | WS_VISIBLE | SS_LEFT,
-                mx, y, ew, 16, hw, NULL, hi, NULL);
-        SendMessageW(c, WM_SETFONT, (WPARAM)g_label_font, TRUE);
-        y += 24;
-
-        int browse_w = 100;
-        int gap = 12;
-        int edit_w = ew - browse_w - gap;
-
-        c = CreateWindowExW(0, L"EDIT", L"",
-                WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_READONLY,
-                mx, y, edit_w, 34,
-                hw, (HMENU)(intptr_t)IDC_FILE_EDIT, hi, NULL);
-        SendMessageW(c, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
-        SendMessageW(c, EM_SETMARGINS,
-                     EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(10, 10));
-
-        c = CreateWindowExW(0, L"BUTTON", L"Browse\u2026",
-                WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-                mx + edit_w + gap, y, browse_w, 34,
-                hw, (HMENU)(intptr_t)IDC_BROWSE, hi, NULL);
-        SendMessageW(c, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
-        subclass_btn(c);
-        y += 52;
-
-        /* ── Display section ───────────────────────────────────── */
-        c = CreateWindowExW(0, L"STATIC", L"DISPLAY",
-                WS_CHILD | WS_VISIBLE | SS_LEFT,
-                mx, y, ew, 16, hw, NULL, hi, NULL);
-        SendMessageW(c, WM_SETFONT, (WPARAM)g_label_font, TRUE);
-        y += 24;
-
-        c = CreateWindowExW(0, L"COMBOBOX", NULL,
-                WS_CHILD | WS_VISIBLE
-                | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED
-                | CBS_HASSTRINGS | WS_VSCROLL,
-                mx, y, ew, 240,
-                hw, (HMENU)(intptr_t)IDC_SCREEN_COMBO, hi, NULL);
-        SendMessageW(c, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
-        for (int i = 0; i < g_nmons; i++)
-            SendMessageW(c, CB_ADDSTRING, 0, (LPARAM)g_mons[i].label);
-        SendMessageW(c, CB_SETCURSEL,
-                     (g_sel_screen >= 0 && g_sel_screen < g_nmons)
-                         ? g_sel_screen : 0, 0);
-        /* Try dark scrollbar (Win10 1809+ / Win11) */
-        SetWindowTheme(c, L"DarkMode_CFD", NULL);
-        y += 50;
-
-        /* ── Muted checkbox ────────────────────────────────────── */
-        c = CreateWindowExW(0, L"BUTTON", L"Start muted",
-                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                mx, y, ew, 24,
-                hw, (HMENU)(intptr_t)IDC_MUTED, hi, NULL);
-        SendMessageW(c, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
-        SetWindowTheme(c, L"DarkMode_Explorer", NULL);
-        if (g_sel_muted)
-            SendMessageW(c, BM_SETCHECK, BST_CHECKED, 0);
-        y += 44;
-
-        /* ── Play + Identify buttons ───────────────────────────── */
-        int btn_w = (ew - gap) / 2;
-
-        c = CreateWindowExW(0, L"BUTTON", L"\u25B6  Play",
-                WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-                mx, y, btn_w, 42,
-                hw, (HMENU)(intptr_t)IDC_PLAY, hi, NULL);
-        SendMessageW(c, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
-        subclass_btn(c);
-
-        c = CreateWindowExW(0, L"BUTTON", L"Identify Screens",
-                WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-                mx + btn_w + gap, y, ew - btn_w - gap, 42,
-                hw, (HMENU)(intptr_t)IDC_IDENTIFY, hi, NULL);
-        SendMessageW(c, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
-        subclass_btn(c);
-
-        /* Show pre-set file path (from partial CLI args). */
-        if (g_sel_file[0])
-            SetDlgItemTextW(hw, IDC_FILE_EDIT, g_sel_file);
-
+        /* Scale to this window's monitor DPI */
+        g_setup_dpi = get_window_dpi(hw);
+        setup_create_fonts();
+        setup_build_ui(hw, hi);
         return 0;
     }
 
@@ -747,8 +813,8 @@ static LRESULT CALLBACK setup_proc(HWND hw, UINT msg,
         /* Subtle separator below the title */
         HPEN sep = CreatePen(PS_SOLID, 1, CLR_SEPARATOR);
         HPEN old = (HPEN)SelectObject(hdc, sep);
-        MoveToEx(hdc, 32, 62, NULL);
-        LineTo(hdc, rc.right - 32, 62);
+        MoveToEx(hdc, sdpi(32), sdpi(62), NULL);
+        LineTo(hdc, rc.right - sdpi(32), sdpi(62));
         SelectObject(hdc, old);
         DeleteObject(sep);
         return 1;
@@ -776,7 +842,7 @@ static LRESULT CALLBACK setup_proc(HWND hw, UINT msg,
                 SetBkMode(di->hDC, TRANSPARENT);
                 SelectObject(di->hDC, g_ui_font);
                 RECT tr = di->rcItem;
-                tr.left += 10;
+                tr.left += sdpi(10);
                 DrawTextW(di->hDC, buf, -1, &tr,
                           DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             }
@@ -813,7 +879,8 @@ static LRESULT CALLBACK setup_proc(HWND hw, UINT msg,
             HPEN   opn = (HPEN)SelectObject(di->hDC, pen);
             RoundRect(di->hDC,
                       di->rcItem.left, di->rcItem.top,
-                      di->rcItem.right, di->rcItem.bottom, 8, 8);
+                      di->rcItem.right, di->rcItem.bottom,
+                      sdpi(8), sdpi(8));
             SelectObject(di->hDC, obr);
             SelectObject(di->hDC, opn);
             DeleteObject(br);
@@ -831,13 +898,13 @@ static LRESULT CALLBACK setup_proc(HWND hw, UINT msg,
             /* Keyboard-focus indicator */
             if (di->itemState & ODS_FOCUS) {
                 RECT fr = di->rcItem;
-                InflateRect(&fr, -3, -3);
+                InflateRect(&fr, -sdpi(3), -sdpi(3));
                 HPEN fp    = CreatePen(PS_DOT, 1, RGB(200,200,200));
                 HPEN ofp   = (HPEN)SelectObject(di->hDC, fp);
                 HBRUSH nul = (HBRUSH)GetStockObject(NULL_BRUSH);
                 HBRUSH on  = (HBRUSH)SelectObject(di->hDC, nul);
                 RoundRect(di->hDC, fr.left, fr.top,
-                          fr.right, fr.bottom, 6, 6);
+                          fr.right, fr.bottom, sdpi(6), sdpi(6));
                 SelectObject(di->hDC, ofp);
                 SelectObject(di->hDC, on);
                 DeleteObject(fp);
@@ -851,7 +918,7 @@ static LRESULT CALLBACK setup_proc(HWND hw, UINT msg,
     case WM_MEASUREITEM: {
         MEASUREITEMSTRUCT *mi = (MEASUREITEMSTRUCT *)lp;
         if (mi->CtlType == ODT_COMBOBOX) {
-            mi->itemHeight = 32;
+            mi->itemHeight = sdpi(32);
             return TRUE;
         }
         break;
@@ -935,12 +1002,46 @@ static LRESULT CALLBACK setup_proc(HWND hw, UINT msg,
         DestroyWindow(hw);
         return 0;
 
+    case WM_DPICHANGED: {
+        /* Save current UI state */
+        int sel = (int)SendDlgItemMessageW(hw, IDC_SCREEN_COMBO,
+                                           CB_GETCURSEL, 0, 0);
+        BOOL muted = (SendDlgItemMessageW(hw, IDC_MUTED,
+                                          BM_GETCHECK, 0, 0)
+                      == BST_CHECKED);
+        g_hover_btn = NULL;
+
+        /* Resize window FIRST so GetClientRect returns correct
+           dimensions when we rebuild child controls. */
+        const RECT *rc = (const RECT *)lp;
+        SetWindowPos(hw, NULL, rc->left, rc->top,
+                     rc->right - rc->left, rc->bottom - rc->top,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+
+        /* Destroy all child controls and recreate at new DPI */
+        EnumChildWindows(hw, destroy_children_cb, 0);
+        g_setup_dpi = HIWORD(wp);
+        setup_create_fonts();
+        setup_build_ui(hw, (HINSTANCE)GetWindowLongPtrW(hw, GWLP_HINSTANCE));
+
+        /* Restore state */
+        SendDlgItemMessageW(hw, IDC_SCREEN_COMBO, CB_SETCURSEL,
+                            (sel >= 0 ? sel : 0), 0);
+        if (muted)
+            SendDlgItemMessageW(hw, IDC_MUTED, BM_SETCHECK,
+                                BST_CHECKED, 0);
+
+        InvalidateRect(hw, NULL, TRUE);
+        return 0;
+    }
+
     case WM_DESTROY:
         dismiss_identify();
         g_setup_hwnd = NULL;
         if (g_br_bg)      { DeleteObject(g_br_bg);      g_br_bg = NULL; }
         if (g_br_input)   { DeleteObject(g_br_input);   g_br_input = NULL; }
         if (g_title_font) { DeleteObject(g_title_font); g_title_font = NULL; }
+        if (g_ui_font)    { DeleteObject(g_ui_font);    g_ui_font = NULL; }
         if (g_label_font) { DeleteObject(g_label_font); g_label_font = NULL; }
         PostQuitMessage(0);
         return 0;
@@ -974,6 +1075,12 @@ static BOOL run_setup(HINSTANCE hi)
     POINT cur;
     GetCursorPos(&cur);
     HMONITOR hcur = MonitorFromPoint(cur, MONITOR_DEFAULTTONEAREST);
+
+    /* Scale window to the target monitor's DPI */
+    UINT monDpi = get_monitor_dpi(hcur);
+    dw = MulDiv(dw, (int)monDpi, 96);
+    dh = MulDiv(dh, (int)monDpi, 96);
+
     MONITORINFO mi;
     mi.cbSize = sizeof(mi);
     GetMonitorInfoW(hcur, &mi);
@@ -1018,7 +1125,6 @@ static BOOL run_setup(HINSTANCE hi)
         DispatchMessageW(&m);
     }
 
-    if (g_ui_font) { DeleteObject(g_ui_font); g_ui_font = NULL; }
     return g_sel_ok;
 }
 
@@ -1081,12 +1187,58 @@ static void parse_args(Args *a)
 /*  Help / usage text                                                  */
 /* ================================================================== */
 
+/* Base dimensions at 96 DPI (100% scaling). */
+#define HELP_FONT_BASE_PT  14
+#define HELP_WND_BASE_W   800
+#define HELP_WND_BASE_H   500
+
+static HFONT help_create_font(UINT dpi)
+{
+    int h = -MulDiv(HELP_FONT_BASE_PT, (int)dpi, 96);
+    return CreateFontW(h, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                       CLEARTYPE_QUALITY, FIXED_PITCH | FF_MODERN, L"Consolas");
+}
+
+static void help_apply_font(HWND hwnd, UINT dpi)
+{
+    HFONT old = (HFONT)(LONG_PTR)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+    HFONT fnt = help_create_font(dpi);
+    SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)fnt);
+    HWND edit = GetWindow(hwnd, GW_CHILD);
+    if (edit) SendMessageW(edit, WM_SETFONT, (WPARAM)fnt, TRUE);
+    if (old)  DeleteObject(old);
+}
+
 static LRESULT CALLBACK help_wnd_proc(HWND hwnd, UINT msg,
                                       WPARAM wp, LPARAM lp)
 {
-    if (msg == WM_DESTROY) {
+    switch (msg) {
+    case WM_SIZE: {
+        HWND edit = GetWindow(hwnd, GW_CHILD);
+        if (edit) {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            MoveWindow(edit, 0, 0, rc.right, rc.bottom, TRUE);
+        }
+        return 0;
+    }
+    case WM_DPICHANGED: {
+        UINT dpi = HIWORD(wp);
+        help_apply_font(hwnd, dpi);
+        const RECT *rc = (const RECT *)lp;
+        SetWindowPos(hwnd, NULL, rc->left, rc->top,
+                     rc->right - rc->left, rc->bottom - rc->top,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+        return 0;
+    }
+    case WM_DESTROY: {
+        HFONT fnt = (HFONT)(LONG_PTR)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+        if (fnt) DeleteObject(fnt);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
         PostQuitMessage(0);
         return 0;
+    }
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -1132,30 +1284,32 @@ static void show_help(void)
     wc.lpszClassName = cls;
     RegisterClassExW(&wc);
 
-    /* Centre a 640x440 window on the primary monitor. */
+    /* Scale window to system DPI and centre on the primary monitor. */
+    UINT sysDpi = get_window_dpi(NULL);
     int sw = GetSystemMetrics(SM_CXSCREEN);
     int sh = GetSystemMetrics(SM_CYSCREEN);
-    int ww = 640, wh = 440;
+    int ww = MulDiv(HELP_WND_BASE_W, (int)sysDpi, 96);
+    int wh = MulDiv(HELP_WND_BASE_H, (int)sysDpi, 96);
     HWND hwnd = CreateWindowExW(
         0, cls, L"DemoMediaPlayer \u2014 Help",
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+        WS_OVERLAPPEDWINDOW,
         (sw - ww) / 2, (sh - wh) / 2, ww, wh,
         NULL, NULL, wc.hInstance, NULL);
 
-    /* Create a read-only multiline EDIT with a fixed-width font. */
+    /* Create a read-only multiline EDIT with a DPI-scaled font. */
     RECT rc;
     GetClientRect(hwnd, &rc);
     HWND edit = CreateWindowExW(
         WS_EX_CLIENTEDGE, L"EDIT", text,
         WS_CHILD | WS_VISIBLE | WS_VSCROLL
-        | ES_MULTILINE | ES_READONLY | ES_LEFT,
+        | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | ES_LEFT,
         0, 0, rc.right, rc.bottom,
         hwnd, NULL, wc.hInstance, NULL);
 
-    HFONT mono = CreateFontW(
-        -14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, FIXED_PITCH | FF_MODERN, L"Consolas");
+    /* Set an initial font scaled to the window's actual monitor DPI. */
+    UINT wndDpi = get_window_dpi(hwnd);
+    HFONT mono  = help_create_font(wndDpi);
+    SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)mono);
     SendMessageW(edit, WM_SETFONT, (WPARAM)mono, TRUE);
 
     ShowWindow(hwnd, SW_SHOWNORMAL);
@@ -1167,8 +1321,6 @@ static void show_help(void)
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
-
-    DeleteObject(mono);
 }
 
 /* ================================================================== */
