@@ -136,13 +136,6 @@ decoding support are all compiled into `libmpv-2.dll`.
 
 ## Architecture Notes
 
-| Component | Purpose |
-|-----------|---------|
-| `main.c` | Single-file C implementation (~350 lines) |
-| **Win32 API** | Setup dialog, fullscreen window, message loop |
-| **libmpv** | All media playback, decoding, rendering |
-| **Dockerfile** | Ubuntu 24.04 + mingw-w64 cross-compilation |
-
 The design intentionally avoids any UI framework (Qt, GTK, etc.).  
 The setup dialog is built from raw Win32 controls (`CreateWindowExW`),
 and the player window is a plain `WS_POPUP | WS_EX_TOPMOST` surface
