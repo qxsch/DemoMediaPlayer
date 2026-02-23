@@ -33,28 +33,6 @@ Cross-compiled from Linux using Docker + mingw-w64.
 
 ---
 
-## Project Structure
-
-```
-demomediaplayer/
-├── main.c          # Single-file C source
-├── Dockerfile      # Multi-stage cross-compilation build
-├── build.sh        # Build script for Linux / macOS
-├── build.ps1       # Build script for Windows (PowerShell)
-├── README.md
-└── .gitignore
-```
-
-Build output (not checked in):
-
-```
-dist/
-├── mediaplayer.exe   # The player executable  (~114 KB)
-└── libmpv-2.dll      # mpv runtime library    (~100 MB)
-```
-
----
-
 ## Building
 
 ### Prerequisites
