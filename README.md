@@ -17,6 +17,7 @@ Cross-compiled from Linux using Docker + mingw-w64.
 - **Hardware acceleration:** automatic hardware decoding (`hwdec=auto`)
 - **Speed control:** slow down or speed up the video (e.g. for live demos)
 - **Pan and zoom:** focus on specific areas of the video (e.g. for live demos)
+- **Taskbar:** show the real os taskbar and crop recorded taskbar out of the video (e.g. for live demos)
 - **Keyboard controls:**
 
 | Key               | Action                       |
