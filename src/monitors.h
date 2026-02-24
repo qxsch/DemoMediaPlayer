@@ -27,6 +27,16 @@ UINT dpi_for_window(HWND hwnd);
 /* Get effective DPI for a monitor handle. */
 UINT dpi_for_monitor(HMONITOR hmon);
 
+/* Compute a DPI-scaled, centered window position on the monitor
+   where the mouse cursor currently sits.  base_w / base_h are
+   dimensions at 96 DPI. */
+typedef struct {
+    int  x, y, w, h;
+    UINT dpi;
+} CursorWindowPos;
+
+CursorWindowPos center_on_cursor(int base_w, int base_h);
+
 /* Scale a base-96-DPI value to the given DPI. */
 int dpi_scale(int value, UINT dpi);
 

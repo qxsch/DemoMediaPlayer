@@ -85,6 +85,31 @@ UINT dpi_for_monitor(HMONITOR hmon)
     return dpi_for_window(NULL);
 }
 
+CursorWindowPos center_on_cursor(int base_w, int base_h)
+{
+    POINT cur;
+    GetCursorPos(&cur);
+    HMONITOR hmon = MonitorFromPoint(cur, MONITOR_DEFAULTTONEAREST);
+
+    UINT dpi = dpi_for_monitor(hmon);
+    int  w   = MulDiv(base_w, (int)dpi, 96);
+    int  h   = MulDiv(base_h, (int)dpi, 96);
+
+    MONITORINFO mi;
+    mi.cbSize = sizeof(mi);
+    GetMonitorInfoW(hmon, &mi);
+    int mw = mi.rcWork.right  - mi.rcWork.left;
+    int mh = mi.rcWork.bottom - mi.rcWork.top;
+
+    CursorWindowPos pos;
+    pos.x   = mi.rcWork.left + (mw - w) / 2;
+    pos.y   = mi.rcWork.top  + (mh - h) / 2;
+    pos.w   = w;
+    pos.h   = h;
+    pos.dpi = dpi;
+    return pos;
+}
+
 int dpi_scale(int value, UINT dpi)
 {
     return MulDiv(value, (int)dpi, 96);

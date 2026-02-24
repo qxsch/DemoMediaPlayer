@@ -119,9 +119,9 @@ static const wchar_t s_help_tagged[] =
     L"<h>Control window:</h>\r\n"
     L"  A floating control window appears during recording:\r\n"
     L"    <k>\u23FA Record</k> / <k>\u23F9 Stop</k>    Start or stop the recording\r\n"
-    L"    <k>\u23F8 Pause</k> / <k>\u25B6 Resume</k>   Pause or resume capture\r\n"
-    L"    <k>[ ] Capture mouse</k>       Toggle mouse cursor in video\r\n"
-    L"    <k>\u23FA Blinking indicator</k>   <d>Red = recording, Amber = paused</d>\r\n"
+    L"    <k>Pause</k> / <k>Resume</k>       Pause or resume capture\r\n"
+    L"    <k>[ ] Capture mouse</k>    Toggle mouse cursor in video\r\n"
+    L"    <k>Blinking indicator</k>   <d>Red = recording, Amber = paused</d>\r\n"
     L"\r\n"
     L"<h>Encoding:</h>\r\n"
     L"  Video: <f>libx264</f> <d>(CRF " LS(REC_DEFAULT_CRF) L", ultrafast)</d> in MP4 container\r\n"
@@ -219,13 +219,16 @@ static void set_fmt(HWND r, LONG a, LONG b, COLORREF clr, BOOL bold)
 }
 
 #define HELP_FONT_PT 12
-static void help_set_font(HWND rich)
+static void help_set_font(HWND rich, UINT mon_dpi)
 {
+    UINT sys_dpi = dpi_for_window(NULL);
     CHARFORMAT2W cf;
     memset(&cf, 0, sizeof(cf));
     cf.cbSize      = sizeof(cf);
     cf.dwMask      = CFM_FACE | CFM_SIZE | CFM_COLOR | CFM_BOLD;
-    cf.yHeight     = HELP_FONT_PT * 20;   /* twips, DPI-independent */
+    /* RichEdit50W converts twips using the system (primary) DPI,
+       not the per-monitor DPI.  Scale the twips value to compensate. */
+    cf.yHeight     = (LONG)MulDiv(HELP_FONT_PT * 20, (int)mon_dpi, (int)sys_dpi);
     cf.crTextColor = HELP_FG;
     cf.dwEffects   = 0;
     lstrcpynW(cf.szFaceName, L"Consolas", LF_FACESIZE);
@@ -234,10 +237,11 @@ static void help_set_font(HWND rich)
 
 /* Apply font + colour spans to the RichEdit.
    Caller supplies the parsed spans array. */
-static void help_apply_spans(HWND rich, const Span *spans, int count)
+static void help_apply_spans(HWND rich, const Span *spans, int count,
+                             UINT mon_dpi)
 {
     SendMessageW(rich, WM_SETREDRAW, FALSE, 0);
-    help_set_font(rich);
+    help_set_font(rich, mon_dpi);
 
     for (int i = 0; i < count; i++) {
         int s = spans[i].style;
@@ -277,8 +281,12 @@ static LRESULT CALLBACK help_wnd_proc(HWND hwnd, UINT msg,
     case WM_DPICHANGED: {
         HelpData *hd = (HelpData *)(LONG_PTR)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
         HWND child = GetWindow(hwnd, GW_CHILD);
+        /* After WM_DPICHANGED, RichEdit recalibrates its internal
+           DPI context to the actual monitor DPI — no compensation
+           needed, so pass sys_dpi to make the ratio 1:1. */
         if (child && hd)
-            help_apply_spans(child, hd->spans, hd->span_count);
+            help_apply_spans(child, hd->spans, hd->span_count,
+                             dpi_for_window(NULL));
         const RECT *rc = (const RECT *)lp;
         SetWindowPos(hwnd, NULL, rc->left, rc->top,
                      rc->right - rc->left, rc->bottom - rc->top,
@@ -320,20 +328,22 @@ void help_show(void)
     wc.lpszClassName = cls;
     RegisterClassExW(&wc);
 
-    UINT sysDpi = dpi_for_window(NULL);
-    int sw = GetSystemMetrics(SM_CXSCREEN);
-    int sh = GetSystemMetrics(SM_CYSCREEN);
-    int ww = MulDiv(HELP_WND_BASE_W, (int)sysDpi, 96);
-    int wh = MulDiv(HELP_WND_BASE_H, (int)sysDpi, 96);
+    CursorWindowPos wp = center_on_cursor(HELP_WND_BASE_W, HELP_WND_BASE_H);
 
     HWND hwnd = CreateWindowExW(
         0, cls, L"DemoMediaPlayer \u2014 Help",
         WS_OVERLAPPEDWINDOW,
-        (sw - ww) / 2, (sh - wh) / 2, ww, wh,
+        wp.x, wp.y, wp.w, wp.h,
         NULL, NULL, wc.hInstance, NULL);
 
     theme_apply_dark_mode(hwnd);
+    ShowWindow(hwnd, SW_SHOWNORMAL);
+    UpdateWindow(hwnd);
 
+    /* Create the RichEdit AFTER showing the parent so that the
+       per-monitor DPI context is fully established.  This avoids
+       the control using a stale / system-default DPI for its
+       internal twips-to-pixels conversion. */
     RECT rc;
     GetClientRect(hwnd, &rc);
     HWND rich = CreateWindowExW(
@@ -360,11 +370,8 @@ void help_show(void)
     SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)hd);
 
     /* Apply font + colours. */
-    help_apply_spans(rich, spans, span_count);
+    help_apply_spans(rich, spans, span_count, wp.dpi);
     HideCaret(rich);
-
-    ShowWindow(hwnd, SW_SHOWNORMAL);
-    UpdateWindow(hwnd);
 
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {

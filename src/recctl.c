@@ -580,28 +580,13 @@ int recctl_run(const RecCtlParams *params)
     ctx.blink_on = TRUE;
     ctx.mouse_cap = !params->no_mouse;
 
-    /* Place window on the monitor the mouse is on. */
-    POINT cur;
-    GetCursorPos(&cur);
-    HMONITOR hcur = MonitorFromPoint(cur, MONITOR_DEFAULTTONEAREST);
-
-    UINT monDpi = dpi_for_monitor(hcur);
-    int dw = MulDiv(440, (int)monDpi, 96);
-    int dh = MulDiv(195, (int)monDpi, 96);
-
-    MONITORINFO mi;
-    mi.cbSize = sizeof(mi);
-    GetMonitorInfoW(hcur, &mi);
-    int mx = mi.rcWork.left;
-    int my = mi.rcWork.top;
-    int mw = mi.rcWork.right  - mi.rcWork.left;
-    int mh = mi.rcWork.bottom - mi.rcWork.top;
+    CursorWindowPos wp = center_on_cursor(440, 195);
 
     HWND hw = CreateWindowExW(
         WS_EX_TOPMOST,
         RECCTL_CLASS, L"DemoMediaPlayer \u2014 Record",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        mx + (mw - dw) / 2, my + (mh - dh) / 2, dw, dh,
+        wp.x, wp.y, wp.w, wp.h,
         NULL, NULL, params->hi, &ctx);
 
     if (!hw) return 1;

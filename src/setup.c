@@ -399,28 +399,12 @@ BOOL setup_run(HINSTANCE hi,
     ctx.nmons    = nmons;
     ctx.result   = result;
 
-    /* Place the dialog on whichever monitor the mouse cursor is on. */
-    POINT cur;
-    GetCursorPos(&cur);
-    HMONITOR hcur = MonitorFromPoint(cur, MONITOR_DEFAULTTONEAREST);
-
-    int dw = 560, dh = 440;
-    UINT monDpi = dpi_for_monitor(hcur);
-    dw = MulDiv(dw, (int)monDpi, 96);
-    dh = MulDiv(dh, (int)monDpi, 96);
-
-    MONITORINFO mi;
-    mi.cbSize = sizeof(mi);
-    GetMonitorInfoW(hcur, &mi);
-    int mx = mi.rcWork.left;
-    int my = mi.rcWork.top;
-    int mw = mi.rcWork.right  - mi.rcWork.left;
-    int mh = mi.rcWork.bottom - mi.rcWork.top;
+    CursorWindowPos wp = center_on_cursor(560, 440);
 
     HWND dlg = CreateWindowExW(
         0, SETUP_CLASS, APP_TITLE,
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        mx + (mw - dw) / 2, my + (mh - dh) / 2, dw, dh,
+        wp.x, wp.y, wp.w, wp.h,
         NULL, NULL, hi, &ctx);
 
     if (!dlg) return FALSE;
