@@ -234,21 +234,21 @@ whenever mpv has events to process.
 
 ```
 src/
-├── main.c          Entry point – orchestrates args, setup, and playback
-├── constants.h     All compile-time #define constants and colour palette
-├── resource.h      Win32 resource identifiers (icon)
-├── args.h/c        Command-line argument parsing (--file, --screen, etc.)
-├── monitors.h/c    Monitor enumeration and per-monitor DPI helpers
+├── main.c          Entry point - orchestrates args, setup, and playback
+├── constants.h     Compile-time constants (metadata, messages, limits, colours, layout)
+├── resource.h      Win32 resource identifiers (icon, maps to app.rc)
+├── args.h/c        Command-line parsing (--file, --screen, --position, --record, etc.)
+├── monitors.h/c    Monitor enumeration (EnumDisplayMonitors) and DPI helpers
 ├── util.h/c        Shared utilities (UTF-8 conversion, file-open dialog)
-├── playback.h/c    Opaque mpv wrapper – only file that includes mpv/client.h
-├── panzoom.h/c     Zoom and pan state management with clamping math
-├── player.h/c      Fullscreen player window and keyboard dispatch
-├── setup.h/c       Interactive setup dialog (file, screen, mute selection)
-├── theme.h/c       DWM dark-mode theming and owner-draw button/combo painting
-├── identify.h/c    "Identify Screens" overlay (big numbers on each monitor)
-├── help.h/c        Help/usage window with keyboard controls reference
-├── recorder.h/c    Screen recording: GDI capture + WASAPI audio → MP4 via mpv
-└── recctl.h/c      Recording control window (start/stop, pause, mouse toggle)
+├── playback.h/c    Opaque mpv wrapper (includes mpv/client.h)
+├── panzoom.h/c     Zoom and pan state with clamping math
+├── player.h/c      Fullscreen borderless topmost player window and keyboard dispatch
+├── setup.h/c       Setup dialog (file, screen, mute, taskbar-visibility, crop options)
+├── theme.h/c       DWM dark-mode theming, DPI-scaled fonts, owner-draw painting
+├── identify.h/c    "Identify Screens" overlay (big numbers, auto-dismiss after 5 s)
+├── help.h/c        Help/usage window with RichEdit control and inline-tag colouring
+├── recorder.h/c    Screen recording: GDI capture + WASAPI loopback audio → MP4 via mpv (includes mpv/client.h)
+└── recctl.h/c      Recording control window (start/stop, pause, blinking indicator)
 ```
 
 All module state is passed through explicit structs (`PlayerCtx`, `SetupCtx`,
