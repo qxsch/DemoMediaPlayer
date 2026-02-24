@@ -55,6 +55,11 @@ void playback_set_zoom_pan(Playback *pb,
                             double pan_x,
                             double pan_y);
 
+/* Set the video-crop property to hide a strip of pixels.
+   crop_bottom = number of source-video pixels to remove from
+   the bottom edge.  Pass 0 to clear the crop. */
+void playback_set_video_crop(Playback *pb, int crop_bottom);
+
 /* ── Event pump ──────────────────────────────────────────────── */
 
 /* Drain the mpv event queue.  Should be called in response to

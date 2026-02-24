@@ -19,4 +19,9 @@ HWND player_create(HINSTANCE hi, const RECT *screen_rect);
    playback_create(). */
 void player_set_playback(HWND player, Playback *pb);
 
+/* Set the number of source-video pixels to crop from the bottom.
+   Must be called before the first mpv event so the crop is applied
+   as soon as video dimensions become available. */
+void player_set_crop(HWND player, int crop_bottom_px);
+
 #endif /* DMP_PLAYER_H */

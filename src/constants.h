@@ -35,7 +35,12 @@
 #define IDC_PLAY         204
 #define IDC_MUTED        205
 #define IDC_IDENTIFY     206
+#define IDC_KEEP_TASKBAR 207
+#define IDC_CROP_TASKBAR 208
 #define IDC_TITLE_LABEL  210
+
+/* ── Taskbar hiding ──────────────────────────────────────────── */
+#define DEFAULT_TASKBAR_HEIGHT 48   /* DPI-base / pixel default     */
 
 /* ── Identify overlay ────────────────────────────────────────── */
 #define IDENTIFY_TIMER   1

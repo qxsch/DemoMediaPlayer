@@ -13,6 +13,8 @@
 typedef struct {
     Playback *pb;
     PanZoom   pz;
+    int       crop_bottom_px;  /* source pixels to crop (0=none)  */
+    BOOL      crop_applied;    /* TRUE once crop was sent to mpv  */
 } PlayerCtx;
 
 /* ── Window procedure ────────────────────────────────────────── */
@@ -28,6 +30,14 @@ static LRESULT CALLBACK player_proc(HWND hw, UINT msg,
     /* ── mpv event pump ────────────────────────────────────────── */
     case WM_MPV_WAKEUP:
         if (ctx && ctx->pb) {
+            /* Apply deferred crop once video dimensions are known. */
+            if (!ctx->crop_applied && ctx->crop_bottom_px > 0) {
+                playback_set_video_crop(ctx->pb, ctx->crop_bottom_px);
+                PlaybackVideoDims dims;
+                if (playback_get_video_dims(ctx->pb, &dims) &&
+                    dims.vid_h > 0)
+                    ctx->crop_applied = TRUE;
+            }
             BOOL eof = FALSE;
             if (playback_pump_events(ctx->pb, hw, &eof)) {
                 /* Error – quit */
@@ -189,4 +199,14 @@ void player_set_playback(HWND player, Playback *pb)
     PlayerCtx *ctx =
         (PlayerCtx *)(LONG_PTR)GetWindowLongPtrW(player, GWLP_USERDATA);
     if (ctx) ctx->pb = pb;
+}
+
+void player_set_crop(HWND player, int crop_bottom_px)
+{
+    PlayerCtx *ctx =
+        (PlayerCtx *)(LONG_PTR)GetWindowLongPtrW(player, GWLP_USERDATA);
+    if (ctx) {
+        ctx->crop_bottom_px = crop_bottom_px;
+        ctx->crop_applied   = FALSE;
+    }
 }

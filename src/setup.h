@@ -13,7 +13,11 @@ typedef struct {
     wchar_t file[MAX_PATH_BUF];
     int     screen;
     BOOL    muted;
-    BOOL    confirmed;   /* TRUE if user clicked Play */
+    BOOL    keep_taskbar;       /* show OS taskbar            */
+    int     keep_taskbar_h;     /* DPI-base height            */
+    BOOL    crop_taskbar;       /* crop taskbar from video    */
+    int     crop_taskbar_px;    /* source-pixel height        */
+    BOOL    confirmed;          /* TRUE if user clicked Play  */
 } SetupResult;
 
 /* Show the setup dialog and run its message loop.
@@ -25,6 +29,8 @@ BOOL setup_run(HINSTANCE hi,
                const wchar_t *initial_file,
                int initial_screen,
                BOOL initial_muted,
+               BOOL initial_keep_taskbar, int keep_taskbar_h,
+               BOOL initial_crop_taskbar, int crop_taskbar_px,
                SetupResult *result);
 
 #endif /* DMP_SETUP_H */

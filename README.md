@@ -119,6 +119,23 @@ mediaplayer.exe -h
 | `--position` / `-p`    | Start at position N seconds (e.g. `-p 10`)   |
 | `--help` / `-h`        | Show help in a window                        |
 
+#### Taskbar options (for screen recordings)
+
+When playing back a screen recording, the recorded taskbar (with the
+wrong clock) can give the game away.  These options let you hide it:
+
+```
+mediaplayer.exe -f "demo.mp4" --fix-taskbar
+mediaplayer.exe -f "demo.mp4" --fix-taskbar=60
+mediaplayer.exe -f "demo.mp4" --keep-taskbar-visible --crop-video-taskbar
+```
+
+| Option                            | Description                                                                                               |
+|-----------------------------------|-----------------------------------------------------------------------------------------------------------|
+| `--keep-taskbar-visible[=N]`      | Shrink the player window by N DPI-scaled units (default 48) to reveal the real Windows taskbar underneath |
+| `--crop-video-taskbar[=N]`        | Crop N pixels (default 48) from the bottom of the source video to hide the recorded taskbar               |
+| `--fix-taskbar[=N]`               | Shorthand: enables both options above with the same value (default 48)                                    |
+
 A bare trailing argument is also treated as the file path:
 
 ```

@@ -35,6 +35,34 @@ void args_parse(AppArgs *a)
         else if (!wcscmp(argv[i], L"--mute") || !wcscmp(argv[i], L"-m")) {
             a->mute = TRUE;
         }
+        else if (!wcsncmp(argv[i], L"--keep-taskbar-visible", 22)) {
+            a->keep_taskbar = TRUE;
+            a->keep_taskbar_h = DEFAULT_TASKBAR_HEIGHT;
+            /* --keep-taskbar-visible=N */
+            if (argv[i][22] == L'=' && argv[i][23] != L'\0')
+                a->keep_taskbar_h = _wtoi(&argv[i][23]);
+            if (a->keep_taskbar_h <= 0)
+                a->keep_taskbar_h = DEFAULT_TASKBAR_HEIGHT;
+        }
+        else if (!wcsncmp(argv[i], L"--crop-video-taskbar", 20)) {
+            a->crop_taskbar = TRUE;
+            a->crop_taskbar_px = DEFAULT_TASKBAR_HEIGHT;
+            /* --crop-video-taskbar=N */
+            if (argv[i][20] == L'=' && argv[i][21] != L'\0')
+                a->crop_taskbar_px = _wtoi(&argv[i][21]);
+            if (a->crop_taskbar_px <= 0)
+                a->crop_taskbar_px = DEFAULT_TASKBAR_HEIGHT;
+        }
+        else if (!wcsncmp(argv[i], L"--fix-taskbar", 13)) {
+            int val = DEFAULT_TASKBAR_HEIGHT;
+            if (argv[i][13] == L'=' && argv[i][14] != L'\0')
+                val = _wtoi(&argv[i][14]);
+            if (val <= 0) val = DEFAULT_TASKBAR_HEIGHT;
+            a->keep_taskbar   = TRUE;
+            a->keep_taskbar_h = val;
+            a->crop_taskbar    = TRUE;
+            a->crop_taskbar_px = val;
+        }
         else if ((!wcscmp(argv[i], L"--position") || !wcscmp(argv[i], L"-p"))
                  && i + 1 < argc)
         {

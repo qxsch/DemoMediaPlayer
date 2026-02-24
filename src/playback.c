@@ -206,6 +206,29 @@ void playback_set_zoom_pan(Playback *pb,
     mpv_set_property(pb->mpv, "video-pan-y", MPV_FORMAT_DOUBLE, &pan_y);
 }
 
+void playback_set_video_crop(Playback *pb, int crop_bottom)
+{
+    if (!pb || !pb->mpv) return;
+    if (crop_bottom <= 0) {
+        mpv_set_property_string(pb->mpv, "video-crop", "");
+        return;
+    }
+    /* We only know the crop height; query the video dimensions
+       so we can express it as WxH+X+Y (full width, reduced height,
+       starting at 0,0).  If dimensions are unavailable yet we
+       cannot set the crop; the caller should retry after playback
+       starts. */
+    PlaybackVideoDims dims;
+    if (!playback_get_video_dims(pb, &dims) || dims.vid_h <= 0)
+        return;
+    int cw = (int)dims.vid_w;
+    int ch = (int)dims.vid_h - crop_bottom;
+    if (ch < 1) ch = 1;
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%dx%d+0+0", cw, ch);
+    mpv_set_property_string(pb->mpv, "video-crop", buf);
+}
+
 /* ── Event pump ──────────────────────────────────────────────── */
 
 BOOL playback_pump_events(Playback *pb, HWND hw, BOOL *eof)

@@ -120,6 +120,27 @@ static void build_ui(HWND hw, HINSTANCE hi, SetupCtx *ctx)
     SetWindowTheme(c, L"DarkMode_Explorer", NULL);
     if (ctx->result->muted)
         SendMessageW(c, BM_SETCHECK, BST_CHECKED, 0);
+    y += sdpi(ctx, 32);
+
+    /* ── Taskbar checkboxes ─────────────────────────────────── */
+    c = CreateWindowExW(0, L"BUTTON", L"Show OS taskbar",
+            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+            mx, y, ew, sdpi(ctx, 24),
+            hw, (HMENU)(intptr_t)IDC_KEEP_TASKBAR, hi, NULL);
+    SendMessageW(c, WM_SETFONT, (WPARAM)ctx->theme.ui_font, TRUE);
+    SetWindowTheme(c, L"DarkMode_Explorer", NULL);
+    if (ctx->result->keep_taskbar)
+        SendMessageW(c, BM_SETCHECK, BST_CHECKED, 0);
+    y += sdpi(ctx, 28);
+
+    c = CreateWindowExW(0, L"BUTTON", L"Crop taskbar from video",
+            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+            mx, y, ew, sdpi(ctx, 24),
+            hw, (HMENU)(intptr_t)IDC_CROP_TASKBAR, hi, NULL);
+    SendMessageW(c, WM_SETFONT, (WPARAM)ctx->theme.ui_font, TRUE);
+    SetWindowTheme(c, L"DarkMode_Explorer", NULL);
+    if (ctx->result->crop_taskbar)
+        SendMessageW(c, BM_SETCHECK, BST_CHECKED, 0);
     y += sdpi(ctx, 44);
 
     /* ── Play + Identify buttons ───────────────────────────── */
@@ -253,6 +274,10 @@ static LRESULT CALLBACK setup_proc(HWND hw, UINT msg,
             if (ctx->result->screen < 0) ctx->result->screen = 0;
             ctx->result->muted = (SendDlgItemMessageW(
                 hw, IDC_MUTED, BM_GETCHECK, 0, 0) == BST_CHECKED);
+            ctx->result->keep_taskbar = (SendDlgItemMessageW(
+                hw, IDC_KEEP_TASKBAR, BM_GETCHECK, 0, 0) == BST_CHECKED);
+            ctx->result->crop_taskbar = (SendDlgItemMessageW(
+                hw, IDC_CROP_TASKBAR, BM_GETCHECK, 0, 0) == BST_CHECKED);
             ctx->result->confirmed = TRUE;
             DestroyWindow(hw);
             return 0;
@@ -283,6 +308,12 @@ static LRESULT CALLBACK setup_proc(HWND hw, UINT msg,
         BOOL muted = (SendDlgItemMessageW(hw, IDC_MUTED,
                                           BM_GETCHECK, 0, 0)
                       == BST_CHECKED);
+        BOOL keep_tb = (SendDlgItemMessageW(hw, IDC_KEEP_TASKBAR,
+                                            BM_GETCHECK, 0, 0)
+                        == BST_CHECKED);
+        BOOL crop_tb = (SendDlgItemMessageW(hw, IDC_CROP_TASKBAR,
+                                            BM_GETCHECK, 0, 0)
+                        == BST_CHECKED);
         ctx->theme.hover_btn = NULL;
 
         /* Resize window FIRST */
@@ -303,6 +334,12 @@ static LRESULT CALLBACK setup_proc(HWND hw, UINT msg,
                             (sel >= 0 ? sel : 0), 0);
         if (muted)
             SendDlgItemMessageW(hw, IDC_MUTED, BM_SETCHECK,
+                                BST_CHECKED, 0);
+        if (keep_tb)
+            SendDlgItemMessageW(hw, IDC_KEEP_TASKBAR, BM_SETCHECK,
+                                BST_CHECKED, 0);
+        if (crop_tb)
+            SendDlgItemMessageW(hw, IDC_CROP_TASKBAR, BM_SETCHECK,
                                 BST_CHECKED, 0);
 
         InvalidateRect(hw, NULL, TRUE);
@@ -325,6 +362,8 @@ BOOL setup_run(HINSTANCE hi,
                const wchar_t *initial_file,
                int initial_screen,
                BOOL initial_muted,
+               BOOL initial_keep_taskbar, int keep_taskbar_h,
+               BOOL initial_crop_taskbar, int crop_taskbar_px,
                SetupResult *result)
 {
     /* Enable modern visual styles (ComCtl32 v6). */
@@ -347,8 +386,12 @@ BOOL setup_run(HINSTANCE hi,
     ZeroMemory(result, sizeof(*result));
     if (initial_file && initial_file[0])
         wcscpy(result->file, initial_file);
-    result->screen = initial_screen;
-    result->muted  = initial_muted;
+    result->screen         = initial_screen;
+    result->muted          = initial_muted;
+    result->keep_taskbar   = initial_keep_taskbar;
+    result->keep_taskbar_h = keep_taskbar_h;
+    result->crop_taskbar   = initial_crop_taskbar;
+    result->crop_taskbar_px = crop_taskbar_px;
 
     SetupCtx ctx;
     ZeroMemory(&ctx, sizeof(ctx));
@@ -361,7 +404,7 @@ BOOL setup_run(HINSTANCE hi,
     GetCursorPos(&cur);
     HMONITOR hcur = MonitorFromPoint(cur, MONITOR_DEFAULTTONEAREST);
 
-    int dw = 560, dh = 410;
+    int dw = 560, dh = 440;
     UINT monDpi = dpi_for_monitor(hcur);
     dw = MulDiv(dw, (int)monDpi, 96);
     dh = MulDiv(dh, (int)monDpi, 96);

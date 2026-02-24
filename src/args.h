@@ -16,6 +16,10 @@ typedef struct {
     BOOL    has_position;
     BOOL    mute;
     BOOL    help;
+    BOOL    keep_taskbar;       /* --keep-taskbar-visible       */
+    int     keep_taskbar_h;     /* height in DPI-base units     */
+    BOOL    crop_taskbar;       /* --crop-video-taskbar         */
+    int     crop_taskbar_px;    /* height in source pixels      */
 } AppArgs;
 
 /* Parse the process command line into an AppArgs struct.
