@@ -253,7 +253,7 @@ src/
 
 All module state is passed through explicit structs (`PlayerCtx`, `SetupCtx`,
 `ThemeCtx`, `PanZoom`) stored via `GWLP_USERDATA` — no file-scope globals.
-The `Playback` struct is opaque; only `playback.c` links against libmpv.
+The `Playback` struct is opaque; only `playback.c` and `recorder.c` link against libmpv.
 
 ---
 
