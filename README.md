@@ -246,7 +246,7 @@ src/
 ├── setup.h/c       Setup dialog (file, screen, mute, taskbar-visibility, crop options)
 ├── theme.h/c       DWM dark-mode theming, DPI-scaled fonts, owner-draw painting
 ├── identify.h/c    "Identify Screens" overlay (big numbers, auto-dismiss after 5 s)
-├── help.h/c        Help/usage window with RichEdit control and inline-tag colouring
+├── help.h/c        Help/usage window with RichEdit control and inline-tag coloring
 ├── recorder.h/c    Screen recording: GDI capture + WASAPI loopback audio → MP4 via mpv (includes mpv/client.h)
 └── recctl.h/c      Recording control window (start/stop, pause, blinking indicator)
 ```
