@@ -69,6 +69,22 @@ void args_parse(AppArgs *a)
             a->position = _wtof(argv[++i]);
             a->has_position = TRUE;
         }
+        else if (!wcscmp(argv[i], L"--record") || !wcscmp(argv[i], L"-r")) {
+            a->record = TRUE;
+        }
+        else if (!wcscmp(argv[i], L"--fps") && i + 1 < argc) {
+            a->rec_fps = _wtoi(argv[++i]);
+        }
+        else if (!wcscmp(argv[i], L"--no-audio")) {
+            a->no_audio = TRUE;
+        }
+        else if (!wcscmp(argv[i], L"--audio-device") && i + 1 < argc) {
+            wcscpy(a->audio_device, argv[++i]);
+            a->has_audio_device = TRUE;
+        }
+        else if (!wcscmp(argv[i], L"--disable-mouse-capture")) {
+            a->no_mouse = TRUE;
+        }
         else if (!a->has_file) {
             /* A bare argument (no flag) is treated as the file path. */
             wcscpy(a->file, argv[i]);

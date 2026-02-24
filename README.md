@@ -18,6 +18,7 @@ Cross-compiled from Linux using Docker + mingw-w64.
 - **Speed control:** slow down or speed up the video (e.g. for live demos)
 - **Pan and zoom:** focus on specific areas of the video (e.g. for live demos)
 - **Taskbar:** show the real os taskbar and crop recorded taskbar out of the video (e.g. for live demos)
+- **Screen recording:** capture any screen to MP4 with system audio (H.264 + AAC)
 - **Keyboard controls:**
 
 | Key               | Action                       |
@@ -90,9 +91,14 @@ docker build --no-cache --target dist --output type=local,dest=./dist .
 
 ## Usage
 
+```pwsh
+# this gives you the help text in a window
+mediaplayer.exe -h
+```
+
 ### Interactive Mode (default)
 
-```
+```pwsh
 mediaplayer.exe
 ```
 
@@ -152,6 +158,57 @@ seeks to the given time in seconds once playback begins.
 
 ---
 
+## Screen Recording
+
+DemoMediaPlayer can capture any screen to an MP4 file with synchronised
+system audio — no external tools or FFmpeg binary required.
+
+### Quick Start
+
+```
+mediaplayer.exe --record -f recording.mp4
+mediaplayer.exe --record -s 2 -f demo.mp4
+mediaplayer.exe --record -f out.mp4 --fps 60
+mediaplayer.exe --record -f out.mp4 --no-audio
+mediaplayer.exe --record -f out.mp4 --disable-mouse-capture
+```
+
+### Recording Options
+
+| Option                       | Description                                              |
+|------------------------------|----------------------------------------------------------|
+| `--record` / `-r`           | Enable screen recording mode                             |
+| `--file` / `-f`             | Output MP4 file path (required)                          |
+| `--screen` / `-s`           | Screen to capture (1-based, default: 1)                  |
+| `--fps <N>`                 | Frame rate (default: 30)                                 |
+| `--no-audio`                | Disable system audio capture                             |
+| `--audio-device <name>`     | Override the audio input device (default: auto-detect)   |
+| `--disable-mouse-capture`   | Do not draw the mouse cursor in the recording            |
+
+### Recording Control Window
+
+When recording loads, a small floating control window appears:
+
+- **Record / Stop** — start or stop the recording
+- **Pause / Resume** — pause or resume capture (audio and video)
+- **Capture mouse** checkbox — toggle mouse cursor visibility in the recording
+- **Blinking indicator** — red while recording, amber while paused, grey when idle
+
+### Technical Details
+
+- **Video codec:** libx264 (CRF 23, ultrafast preset) in MP4 container
+- **Audio codec:** AAC at 192 kbps
+- **Capture method:** Win32 GDI (`BitBlt`) with wall-clock-paced frame delivery
+- **Audio capture:** WASAPI loopback (captures all system audio)
+- **Mouse cursor:** optionally composited via `GetCursorInfo` + `DrawIconEx`
+- **Architecture:** capture thread writes to a double-buffer; mpv's stream
+  callback reads frames at wall-clock pace using `QueryPerformanceCounter`;
+  audio uses a ring buffer with non-blocking writes to keep WASAPI drained
+- **Container finalisation:** the MP4 moov atom is written cleanly on stop
+  (waits for the encoder to flush before closing)
+
+---
+
 ## Runtime Requirements
 
 - **Windows 7 or later** (x86_64)
@@ -189,7 +246,9 @@ src/
 ├── setup.h/c       Interactive setup dialog (file, screen, mute selection)
 ├── theme.h/c       DWM dark-mode theming and owner-draw button/combo painting
 ├── identify.h/c    "Identify Screens" overlay (big numbers on each monitor)
-└── help.h/c        Help/usage window with keyboard controls reference
+├── help.h/c        Help/usage window with keyboard controls reference
+├── recorder.h/c    Screen recording: GDI capture + WASAPI audio → MP4 via mpv
+└── recctl.h/c      Recording control window (start/stop, pause, mouse toggle)
 ```
 
 All module state is passed through explicit structs (`PlayerCtx`, `SetupCtx`,

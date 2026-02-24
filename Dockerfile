@@ -60,6 +60,7 @@ RUN set -e; \
     printf 'MPV_INC=%s\nMPV_LIB=%s\nMPV_DLL=%s\n' "$INC" "$LIB" "$DLL" \
         | tee /opt/mpv.env
 
+
 # ── Compile ──────────────────────────────────────────────────────
 WORKDIR /build
 COPY src/ src/
@@ -76,6 +77,7 @@ RUN set -e; . /opt/mpv.env; \
         -lmpv \
         -lcomdlg32 -luser32 -lgdi32 -lole32 -lshell32 \
         -ldwmapi -lcomctl32 -luxtheme \
+        -lwinmm \
         -lm \
         -mwindows -municode \
         -O2 -s -static-libgcc; \

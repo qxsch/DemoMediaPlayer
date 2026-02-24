@@ -17,15 +17,21 @@
 #define DMP_MAX_MONITORS 16
 #define MAX_PATH_BUF     4096
 
-/* ── Playback speed ──────────────────────────────────────────── */
-#define SPEED_MIN        0.5
-#define SPEED_MAX        3.0
-#define SPEED_STEP       0.1
+/* ── Playback speed (integer % is the source of truth) ─────── */
+#define SPEED_MIN_PCT    50
+#define SPEED_MAX_PCT    300
+#define SPEED_STEP_PCT   10
+#define SPEED_MIN        (SPEED_MIN_PCT  / 100.0)
+#define SPEED_MAX        (SPEED_MAX_PCT  / 100.0)
+#define SPEED_STEP       (SPEED_STEP_PCT / 100.0)
 
-/* ── Zoom & pan ──────────────────────────────────────────────── */
-#define ZOOM_MIN         1.0
-#define ZOOM_MAX         4.0
-#define ZOOM_STEP        0.1
+/* ── Zoom & pan (integer % is the source of truth) ───────────── */
+#define ZOOM_MIN_PCT     100
+#define ZOOM_MAX_PCT     400
+#define ZOOM_STEP_PCT    10
+#define ZOOM_MIN         (ZOOM_MIN_PCT  / 100.0)
+#define ZOOM_MAX         (ZOOM_MAX_PCT  / 100.0)
+#define ZOOM_STEP        (ZOOM_STEP_PCT / 100.0)
 #define PAN_STEP         0.01
 
 /* ── Setup-dialog control IDs ────────────────────────────────── */
@@ -41,6 +47,27 @@
 
 /* ── Taskbar hiding ──────────────────────────────────────────── */
 #define DEFAULT_TASKBAR_HEIGHT 48   /* DPI-base / pixel default     */
+
+/* ── Screen recording defaults ───────────────────────────────── */
+#define REC_DEFAULT_FPS     30
+#define REC_DEFAULT_CODEC   "libx264"
+#define REC_DEFAULT_CRF     23
+#define REC_DEFAULT_PRESET  "ultrafast"
+
+/* ── Recording control window ────────────────────────────────── */
+#define RECCTL_CLASS      L"DMP_RecCtl"
+#define IDC_REC_STARTSTOP 301
+#define IDC_REC_PAUSE     302
+#define IDC_REC_INDICATOR 303
+#define IDC_REC_MOUSE     304
+#define WM_REC_TICK       (WM_USER + 10)
+#define REC_TICK_TIMER    2
+#define REC_TICK_INTERVAL 500   /* ms – blink interval */
+#define WM_REC_STOP_DONE  (WM_USER + 11)  /* async stop completed */
+
+#define CLR_REC_ACTIVE    RGB(220, 38, 38)    /* red indicator    */
+#define CLR_REC_PAUSED    RGB(250, 190, 50)   /* amber / paused   */
+#define CLR_REC_INACTIVE  RGB(80, 80, 80)     /* gray indicator   */
 
 /* ── Identify overlay ────────────────────────────────────────── */
 #define IDENTIFY_TIMER   1

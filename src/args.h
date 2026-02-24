@@ -20,6 +20,12 @@ typedef struct {
     int     keep_taskbar_h;     /* height in DPI-base units     */
     BOOL    crop_taskbar;       /* --crop-video-taskbar         */
     int     crop_taskbar_px;    /* height in source pixels      */
+    BOOL    record;              /* --record mode                */
+    int     rec_fps;             /* --fps (0 = use default)      */
+    BOOL    no_audio;            /* --no-audio                   */
+    wchar_t audio_device[256];   /* --audio-device <name>        */
+    BOOL    has_audio_device;
+    BOOL    no_mouse;            /* --disable-mouse-capture      */
 } AppArgs;
 
 /* Parse the process command line into an AppArgs struct.

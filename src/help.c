@@ -1,82 +1,263 @@
 /*
- * help.c – Help / usage window
+ * help.c – Help / usage window (RichEdit with inline-tag colouring)
+ *
+ * Tags:  <t>title</t>  <s>section</s>  <h>heading</h>
+ *        <f>flag</f>    <k>key</k>      <x>example</x>
+ *        <d>dim</d>
+ *
+ * The parser strips tags, builds plain text, and records
+ * {start, end, style} spans for colouring after insertion.
  */
 #include "help.h"
 #include "constants.h"
 #include "resource.h"
 #include "monitors.h"   /* dpi_for_window */
+#include "theme.h"      /* theme_apply_dark_mode */
+#include <richedit.h>
 
-/* ── Help text ───────────────────────────────────────────────── */
+/* Wide-string literal from macro value: LS(FOO) → L"<value>" */
+#define _LS_STR(x) #x
+#define _LS_CAT(x) L ## x
+#define _LS_W(x)   _LS_CAT(x)
+#define LS(x)      _LS_W(_LS_STR(x))
 
-static const wchar_t s_help_text[] =
-    L"DemoMediaPlayer \u2014 Minimal Fullscreen Media Player\r\n"
+/* ── Colour palette ──────────────────────────────────────────── */
+#define HELP_BG       RGB(30, 30, 30)
+#define HELP_FG       RGB(204, 204, 204)
+#define CLR_TITLE     RGB(86, 182, 255)     /* bright blue       */
+#define CLR_SECTION   RGB(78, 201, 176)     /* teal              */
+#define CLR_HEADING   RGB(220, 180, 80)     /* gold              */
+#define CLR_FLAG      RGB(156, 220, 120)    /* green             */
+#define CLR_KEY       RGB(206, 145, 255)    /* purple            */
+#define CLR_EXAMPLE   RGB(120, 120, 120)    /* dim gray          */
+#define CLR_DIM       RGB(100, 100, 100)    /* dimmer gray       */
+
+/* ── RichEdit class name ─────────────────────────────────────── */
+#ifndef MSFTEDIT_CLASS
+#define MSFTEDIT_CLASS L"RICHEDIT50W"
+#endif
+
+/* ── Style IDs ───────────────────────────────────────────────── */
+enum { ST_T, ST_S, ST_H, ST_F, ST_K, ST_X, ST_D, ST_COUNT };
+
+static const struct { const wchar_t *open; const wchar_t *close;
+                      COLORREF clr; BOOL bold; } s_styles[ST_COUNT] = {
+    [ST_T] = { L"<t>", L"</t>", CLR_TITLE,   TRUE  },
+    [ST_S] = { L"<s>", L"</s>", CLR_SECTION, TRUE  },
+    [ST_H] = { L"<h>", L"</h>", CLR_HEADING, TRUE  },
+    [ST_F] = { L"<f>", L"</f>", CLR_FLAG,    FALSE },
+    [ST_K] = { L"<k>", L"</k>", CLR_KEY,     FALSE },
+    [ST_X] = { L"<x>", L"</x>", CLR_EXAMPLE, FALSE },
+    [ST_D] = { L"<d>", L"</d>", CLR_DIM,     FALSE },
+};
+
+/* ── Tagged help text ────────────────────────────────────────── */
+
+static const wchar_t s_help_tagged[] =
+    L"<t>DemoMediaPlayer \u2014 Minimal Fullscreen Media Player</t>\r\n"
     L"\r\n"
-    L"Usage:\r\n"
-    L"  mediaplayer.exe                        Interactive mode (setup dialog)\r\n"
-    L"  mediaplayer.exe --file <path>           Play file fullscreen\r\n"
-    L"  mediaplayer.exe --file <path> --screen N\r\n"
-    L"  mediaplayer.exe <path>                  Bare argument = file path\r\n"
+    L"<s>\u2500\u2500 Playback \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500</s>\r\n"
     L"\r\n"
-    L"Options:\r\n"
-    L"  -f, --file <path>    Path to the media file to play\r\n"
-    L"  -s, --screen <N>     Screen number (1-based, default: 1)\r\n"
-    L"  -m, --mute           Start playback muted\r\n"
-    L"  -p, --position <N>   Start at position N seconds\r\n"
-    L"  -h, --help           Show this help message\r\n"
+    L"<h>Usage:</h>\r\n"
+    L"  <x>mediaplayer.exe</x>                         Interactive mode (setup dialog)\r\n"
+    L"  <x>mediaplayer.exe --file <path></x>           Play file fullscreen\r\n"
+    L"  <x>mediaplayer.exe --file <path> --screen N</x>\r\n"
+    L"  <x>mediaplayer.exe <path></x>                  Bare argument = file path\r\n"
     L"\r\n"
-    L"Taskbar options (screen recordings):\r\n"
-    L"  --keep-taskbar-visible[=N]   Shrink window by N DPI units\r\n"
-    L"                               (default 48) to reveal the\r\n"
+    L"<h>Options:</h>\r\n"
+    L"  <f>-f</f>, <f>--file <path></f>    Path to the media file to play\r\n"
+    L"  <f>-s</f>, <f>--screen <N></f>     Screen number (1-based, default: 1)\r\n"
+    L"  <f>-m</f>, <f>--mute</f>           Start playback muted\r\n"
+    L"  <f>-p</f>, <f>--position <N></f>   Start at position N seconds\r\n"
+    L"  <f>-h</f>, <f>--help</f>           Show this help message\r\n"
+    L"\r\n"
+    L"<h>Taskbar options:</h>\r\n"
+    L"  <f>--keep-taskbar-visible[=N]</f>   Shrink window by N DPI units\r\n"
+    L"                               <d>(default " LS(DEFAULT_TASKBAR_HEIGHT) L")</d> to reveal the\r\n"
     L"                               real taskbar underneath\r\n"
-    L"  --crop-video-taskbar[=N]     Crop N pixels (default 48)\r\n"
+    L"  <f>--crop-video-taskbar[=N]</f>     Crop N pixels <d>(default " LS(DEFAULT_TASKBAR_HEIGHT) L")</d>\r\n"
     L"                               from the bottom of the source\r\n"
     L"                               video to hide the recorded\r\n"
     L"                               taskbar\r\n"
-    L"  --fix-taskbar[=N]            Shorthand for both options\r\n"
+    L"  <f>--fix-taskbar[=N]</f>            Shorthand for both options\r\n"
     L"                               above with the same value\r\n"
     L"\r\n"
-    L"Keyboard controls during playback:\r\n"
-    L"  ESC          Quit\r\n"
-    L"  S            Restart from beginning\r\n"
-    L"  P / Space    Toggle pause\r\n"
-    L"  R            Seek back 30 seconds\r\n"
-    L"  F            Seek forward 30 seconds\r\n"
-    L"  Left         Seek back 5 seconds\r\n"
-    L"  Right        Seek forward 5 seconds\r\n"
-    L"  Up           Speed +10% (max 300%)\r\n"
-    L"  Down         Speed -10% (min 50%)\r\n"
-    L"  Enter        Reset speed to 100%\r\n"
-    L"  M            Toggle mute\r\n"
+    L"<h>Keyboard controls:</h>\r\n"
+    L"  <k>ESC</k>          Quit\r\n"
+    L"  <k>S</k>            Restart from beginning\r\n"
+    L"  <k>P</k> / <k>Space</k>    Toggle pause\r\n"
+    L"  <k>R</k>            Seek back 30 seconds\r\n"
+    L"  <k>F</k>            Seek forward 30 seconds\r\n"
+    L"  <k>Left</k>         Seek back 5 seconds\r\n"
+    L"  <k>Right</k>        Seek forward 5 seconds\r\n"
+    L"  <k>Up</k>           Speed +" LS(SPEED_STEP_PCT) L"% <d>(max " LS(SPEED_MAX_PCT) L"%)</d>\r\n"
+    L"  <k>Down</k>         Speed -" LS(SPEED_STEP_PCT) L"% <d>(min " LS(SPEED_MIN_PCT) L"%)</d>\r\n"
+    L"  <k>Enter</k>        Reset speed to 100%\r\n"
+    L"  <k>M</k>            Toggle mute\r\n"
     L"\r\n"
-    L"  4            Pan left\r\n"
-    L"  6            Pan right\r\n"
-    L"  8            Pan up\r\n"
-    L"  2            Pan down\r\n"
-    L"  9 / -        Zoom out 10% (min 100%)\r\n"
-    L"  3 / +        Zoom in 10% (max 400%)\r\n"
-    L"  0            Reset pan and zoom\r\n"
-    L"  A            Reset all (zoom, pan, speed)\r\n";
+    L"  <k>4</k>            Pan left\r\n"
+    L"  <k>6</k>            Pan right\r\n"
+    L"  <k>8</k>            Pan up\r\n"
+    L"  <k>2</k>            Pan down\r\n"
+    L"  <k>9</k> / <k>-</k>        Zoom out " LS(ZOOM_STEP_PCT) L"% <d>(min " LS(ZOOM_MIN_PCT) L"%)</d>\r\n"
+    L"  <k>3</k> / <k>+</k>        Zoom in " LS(ZOOM_STEP_PCT) L"% <d>(max " LS(ZOOM_MAX_PCT) L"%)</d>\r\n"
+    L"  <k>0</k>            Reset pan and zoom\r\n"
+    L"  <k>A</k>            Reset all <d>(zoom, pan, speed)</d>\r\n"
+    L"\r\n"
+    L"<s>\u2500\u2500 Screen Recording \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500</s>\r\n"
+    L"\r\n"
+    L"<h>Options:</h>\r\n"
+    L"  <f>-r</f>, <f>--record</f>         Record a screen to H.264 MP4\r\n"
+    L"  <f>-f</f>, <f>--file <path></f>    Output file path (required)\r\n"
+    L"  <f>-s</f>, <f>--screen <N></f>     Screen to record <d>(1-based, default: 1)</d>\r\n"
+    L"  <f>--fps <N></f>            Frame rate <d>(default: " LS(REC_DEFAULT_FPS) L")</d>\r\n"
+    L"  <f>--no-audio</f>           Disable system audio capture\r\n"
+    L"  <f>--audio-device <name></f>  Audio input device name\r\n"
+    L"                       <d>(default: auto-detect loopback)</d>\r\n"
+    L"  <f>--disable-mouse-capture</f>  Do not draw the mouse cursor\r\n"
+    L"\r\n"
+    L"<h>Control window:</h>\r\n"
+    L"  A floating control window appears during recording:\r\n"
+    L"    <k>\u23FA Record</k> / <k>\u23F9 Stop</k>    Start or stop the recording\r\n"
+    L"    <k>\u23F8 Pause</k> / <k>\u25B6 Resume</k>   Pause or resume capture\r\n"
+    L"    <k>[ ] Capture mouse</k>       Toggle mouse cursor in video\r\n"
+    L"    <k>\u23FA Blinking indicator</k>   <d>Red = recording, Amber = paused</d>\r\n"
+    L"\r\n"
+    L"<h>Encoding:</h>\r\n"
+    L"  Video: <f>libx264</f> <d>(CRF " LS(REC_DEFAULT_CRF) L", ultrafast)</d> in MP4 container\r\n"
+    L"  Audio: WASAPI loopback \u2192 <f>AAC 192 kbps</f>\r\n"
+    L"\r\n"
+    L"<h>Examples:</h>\r\n"
+    L"  <x>mediaplayer.exe --record -s 1 -f recording.mp4</x>\r\n"
+    L"  <x>mediaplayer.exe --record -s 2 -f out.mp4 --fps 60</x>\r\n"
+    L"  <x>mediaplayer.exe --record -f out.mp4 --no-audio</x>\r\n"
+    L"  <x>mediaplayer.exe --record -f out.mp4 --disable-mouse-capture</x>\r\n";
 
-/* ── Font helpers ────────────────────────────────────────────── */
+/* ── Tag parser ──────────────────────────────────────────────── */
 
-static HFONT help_create_font(UINT dpi)
+typedef struct { LONG start; LONG end; int style; } Span;
+
+/*
+ * Parse s_help_tagged → plain text + colour spans.
+ * Returns the plain text (caller must free).
+ * *out_spans receives a malloc'd array, *out_count its length.
+ */
+static wchar_t *parse_tags(const wchar_t *src,
+                           Span **out_spans, int *out_count)
 {
-    int h = -MulDiv(HELP_FONT_BASE_PT, (int)dpi, 96);
-    return CreateFontW(h, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                       CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                       FIXED_PITCH | FF_MODERN, L"Consolas");
+    size_t slen = wcslen(src);
+    wchar_t *plain = (wchar_t *)malloc((slen + 1) * sizeof(wchar_t));
+    Span    *spans = (Span *)malloc(256 * sizeof(Span));
+    int      cap   = 256, cnt = 0;
+    LONG     wp    = 0;          /* write position in plain */
+    size_t   rp    = 0;          /* read position in src    */
+
+    /*
+     * RichEdit converts every \r\n pair to a single \r internally,
+     * so we must do the same here to keep span positions in sync.
+     */
+#define COPY_CHAR() do {                           \
+        plain[wp++] = src[rp++];                   \
+        if (src[rp-1]==L'\r' && rp<slen && src[rp]==L'\n') rp++; \
+    } while(0)
+
+    while (rp < slen) {
+        if (src[rp] == L'<') {
+            /* Try to match an opening or closing tag. */
+            BOOL matched = FALSE;
+            for (int s = 0; s < ST_COUNT; s++) {
+                /* opening tag */
+                size_t olen = wcslen(s_styles[s].open);
+                if (wcsncmp(src + rp, s_styles[s].open, olen) == 0) {
+                    rp += olen;
+                    LONG span_start = wp;
+                    /* find closing tag */
+                    size_t clen = wcslen(s_styles[s].close);
+                    while (rp < slen) {
+                        if (src[rp] == L'<'
+                            && wcsncmp(src + rp, s_styles[s].close, clen) == 0) {
+                            rp += clen;
+                            break;
+                        }
+                        COPY_CHAR();
+                    }
+                    if (cnt == cap) {
+                        cap *= 2;
+                        spans = (Span *)realloc(spans, (size_t)cap * sizeof(Span));
+                    }
+                    spans[cnt++] = (Span){ span_start, wp, s };
+                    matched = TRUE;
+                    break;
+                }
+            }
+            if (!matched) { COPY_CHAR(); }
+        } else {
+            COPY_CHAR();
+        }
+    }
+#undef COPY_CHAR
+    plain[wp] = L'\0';
+    *out_spans = spans;
+    *out_count = cnt;
+    return plain;
 }
 
-static void help_apply_font(HWND hwnd, UINT dpi)
+/* ── RichEdit formatting helpers ─────────────────────────────── */
+
+static void set_fmt(HWND r, LONG a, LONG b, COLORREF clr, BOOL bold)
 {
-    HFONT old = (HFONT)(LONG_PTR)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
-    HFONT fnt = help_create_font(dpi);
-    SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)fnt);
-    HWND edit = GetWindow(hwnd, GW_CHILD);
-    if (edit) SendMessageW(edit, WM_SETFONT, (WPARAM)fnt, TRUE);
-    if (old)  DeleteObject(old);
+    if (a >= b) return;
+    CHARRANGE sel = { a, b };
+    SendMessageW(r, EM_EXSETSEL, 0, (LPARAM)&sel);
+    CHARFORMAT2W cf;
+    memset(&cf, 0, sizeof(cf));
+    cf.cbSize      = sizeof(cf);
+    cf.dwMask      = CFM_COLOR | CFM_BOLD;
+    cf.crTextColor = clr;
+    cf.dwEffects   = bold ? CFE_BOLD : 0;
+    SendMessageW(r, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&cf);
 }
+
+#define HELP_FONT_PT 12
+static void help_set_font(HWND rich)
+{
+    CHARFORMAT2W cf;
+    memset(&cf, 0, sizeof(cf));
+    cf.cbSize      = sizeof(cf);
+    cf.dwMask      = CFM_FACE | CFM_SIZE | CFM_COLOR | CFM_BOLD;
+    cf.yHeight     = HELP_FONT_PT * 20;   /* twips, DPI-independent */
+    cf.crTextColor = HELP_FG;
+    cf.dwEffects   = 0;
+    lstrcpynW(cf.szFaceName, L"Consolas", LF_FACESIZE);
+    SendMessageW(rich, EM_SETCHARFORMAT, SCF_ALL, (LPARAM)&cf);
+}
+
+/* Apply font + colour spans to the RichEdit.
+   Caller supplies the parsed spans array. */
+static void help_apply_spans(HWND rich, const Span *spans, int count)
+{
+    SendMessageW(rich, WM_SETREDRAW, FALSE, 0);
+    help_set_font(rich);
+
+    for (int i = 0; i < count; i++) {
+        int s = spans[i].style;
+        set_fmt(rich, spans[i].start, spans[i].end,
+                s_styles[s].clr, s_styles[s].bold);
+    }
+
+    CHARRANGE cr = { 0, 0 };
+    SendMessageW(rich, EM_EXSETSEL, 0, (LPARAM)&cr);
+    SendMessageW(rich, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(rich, NULL, TRUE);
+    SendMessageW(rich, WM_VSCROLL, SB_TOP, 0);
+}
+
+/* ── Window-level data (stored via GWLP_USERDATA) ────────────── */
+
+typedef struct {
+    Span *spans;
+    int   span_count;
+} HelpData;
 
 /* ── Window procedure ────────────────────────────────────────── */
 
@@ -85,26 +266,34 @@ static LRESULT CALLBACK help_wnd_proc(HWND hwnd, UINT msg,
 {
     switch (msg) {
     case WM_SIZE: {
-        HWND edit = GetWindow(hwnd, GW_CHILD);
-        if (edit) {
+        HWND child = GetWindow(hwnd, GW_CHILD);
+        if (child) {
             RECT rc;
             GetClientRect(hwnd, &rc);
-            MoveWindow(edit, 0, 0, rc.right, rc.bottom, TRUE);
+            MoveWindow(child, 0, 0, rc.right, rc.bottom, TRUE);
         }
         return 0;
     }
     case WM_DPICHANGED: {
-        UINT dpi = HIWORD(wp);
-        help_apply_font(hwnd, dpi);
+        HelpData *hd = (HelpData *)(LONG_PTR)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+        HWND child = GetWindow(hwnd, GW_CHILD);
+        if (child && hd)
+            help_apply_spans(child, hd->spans, hd->span_count);
         const RECT *rc = (const RECT *)lp;
         SetWindowPos(hwnd, NULL, rc->left, rc->top,
                      rc->right - rc->left, rc->bottom - rc->top,
                      SWP_NOZORDER | SWP_NOACTIVATE);
         return 0;
     }
+    case WM_COMMAND:
+        if (HIWORD(wp) == EN_SETFOCUS) {
+            HideCaret((HWND)lp);
+            return 0;
+        }
+        break;
     case WM_DESTROY: {
-        HFONT fnt = (HFONT)(LONG_PTR)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
-        if (fnt) DeleteObject(fnt);
+        HelpData *hd = (HelpData *)(LONG_PTR)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+        if (hd) { free(hd->spans); free(hd); }
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
         PostQuitMessage(0);
         return 0;
@@ -117,6 +306,8 @@ static LRESULT CALLBACK help_wnd_proc(HWND hwnd, UINT msg,
 
 void help_show(void)
 {
+    LoadLibraryW(L"Msftedit.dll");
+
     static const wchar_t *cls = L"DMP_HelpWnd";
     WNDCLASSEXW wc = {0};
     wc.cbSize        = sizeof(wc);
@@ -125,11 +316,10 @@ void help_show(void)
     wc.hCursor       = LoadCursorW(NULL, IDC_ARROW);
     wc.hIcon         = LoadIconW(wc.hInstance, MAKEINTRESOURCEW(IDI_APPICON));
     wc.hIconSm       = LoadIconW(wc.hInstance, MAKEINTRESOURCEW(IDI_APPICON));
-    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.hbrBackground = CreateSolidBrush(HELP_BG);
     wc.lpszClassName = cls;
     RegisterClassExW(&wc);
 
-    /* Scale window to system DPI and centre on primary monitor. */
     UINT sysDpi = dpi_for_window(NULL);
     int sw = GetSystemMetrics(SM_CXSCREEN);
     int sh = GetSystemMetrics(SM_CYSCREEN);
@@ -142,25 +332,40 @@ void help_show(void)
         (sw - ww) / 2, (sh - wh) / 2, ww, wh,
         NULL, NULL, wc.hInstance, NULL);
 
-    /* Create a read-only multiline EDIT with DPI-scaled font. */
+    theme_apply_dark_mode(hwnd);
+
     RECT rc;
     GetClientRect(hwnd, &rc);
-    HWND edit = CreateWindowExW(
-        WS_EX_CLIENTEDGE, L"EDIT", s_help_text,
+    HWND rich = CreateWindowExW(
+        0, MSFTEDIT_CLASS, L"",
         WS_CHILD | WS_VISIBLE | WS_VSCROLL
         | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | ES_LEFT,
         0, 0, rc.right, rc.bottom,
         hwnd, NULL, wc.hInstance, NULL);
 
-    UINT wndDpi = dpi_for_window(hwnd);
-    HFONT mono  = help_create_font(wndDpi);
-    SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)mono);
-    SendMessageW(edit, WM_SETFONT, (WPARAM)mono, TRUE);
+    SendMessageW(rich, EM_SETBKGNDCOLOR, 0, (LPARAM)HELP_BG);
+    SendMessageW(rich, EM_SETEVENTMASK, 0, 0);
+
+    /* Parse tagged text → plain + spans, insert plain. */
+    Span *spans = NULL;
+    int   span_count = 0;
+    wchar_t *plain = parse_tags(s_help_tagged, &spans, &span_count);
+    SetWindowTextW(rich, plain);
+    free(plain);
+
+    /* Store spans for re-application on DPI change. */
+    HelpData *hd = (HelpData *)calloc(1, sizeof(HelpData));
+    hd->spans      = spans;
+    hd->span_count = span_count;
+    SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)hd);
+
+    /* Apply font + colours. */
+    help_apply_spans(rich, spans, span_count);
+    HideCaret(rich);
 
     ShowWindow(hwnd, SW_SHOWNORMAL);
     UpdateWindow(hwnd);
 
-    /* Run a small message loop just for this window. */
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
         TranslateMessage(&msg);
