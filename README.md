@@ -155,6 +155,29 @@ mpv's event loop is integrated with the Win32 message loop through
 `mpv_set_wakeup_callback`, which posts a custom `WM_USER` message
 whenever mpv has events to process.
 
+### Source Structure
+
+```
+src/
+├── main.c          Entry point – orchestrates args, setup, and playback
+├── constants.h     All compile-time #define constants and colour palette
+├── resource.h      Win32 resource identifiers (icon)
+├── args.h/c        Command-line argument parsing (--file, --screen, etc.)
+├── monitors.h/c    Monitor enumeration and per-monitor DPI helpers
+├── util.h/c        Shared utilities (UTF-8 conversion, file-open dialog)
+├── playback.h/c    Opaque mpv wrapper – only file that includes mpv/client.h
+├── panzoom.h/c     Zoom and pan state management with clamping math
+├── player.h/c      Fullscreen player window and keyboard dispatch
+├── setup.h/c       Interactive setup dialog (file, screen, mute selection)
+├── theme.h/c       DWM dark-mode theming and owner-draw button/combo painting
+├── identify.h/c    "Identify Screens" overlay (big numbers on each monitor)
+└── help.h/c        Help/usage window with keyboard controls reference
+```
+
+All module state is passed through explicit structs (`PlayerCtx`, `SetupCtx`,
+`ThemeCtx`, `PanZoom`) stored via `GWLP_USERDATA` — no file-scope globals.
+The `Playback` struct is opaque; only `playback.c` links against libmpv.
+
 ---
 
 

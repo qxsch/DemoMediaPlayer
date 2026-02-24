@@ -62,7 +62,7 @@ RUN set -e; \
 
 # ── Compile ──────────────────────────────────────────────────────
 WORKDIR /build
-COPY main.c .
+COPY src/ src/
 COPY app.rc .
 COPY app.manifest .
 COPY icon.ico .
@@ -71,8 +71,8 @@ RUN set -e; . /opt/mpv.env; \
     echo ">>> Compiling resources …"; \
     x86_64-w64-mingw32-windres app.rc -o app_res.o; \
     echo ">>> Compiling …"; \
-    x86_64-w64-mingw32-gcc -o mediaplayer.exe main.c app_res.o \
-        -I"$MPV_INC" -L"$MPV_LIB" \
+    x86_64-w64-mingw32-gcc -o mediaplayer.exe src/*.c app_res.o \
+        -Isrc -I"$MPV_INC" -L"$MPV_LIB" \
         -lmpv \
         -lcomdlg32 -luser32 -lgdi32 -lole32 -lshell32 \
         -ldwmapi -lcomctl32 -luxtheme \
