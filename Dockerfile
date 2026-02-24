@@ -76,6 +76,7 @@ RUN set -e; . /opt/mpv.env; \
         -lmpv \
         -lcomdlg32 -luser32 -lgdi32 -lole32 -lshell32 \
         -ldwmapi -lcomctl32 -luxtheme \
+        -lm \
         -mwindows -municode \
         -O2 -s -static-libgcc; \
     echo ">>> Build OK"; \

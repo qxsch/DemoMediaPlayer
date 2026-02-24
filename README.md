@@ -17,19 +17,27 @@ Cross-compiled from Linux using Docker + mingw-w64.
 - **Hardware acceleration:** automatic hardware decoding (`hwdec=auto`)
 - **Keyboard controls:**
 
-| Key         | Action                  |
-|-------------|-------------------------|
-| **ESC**     | Quit                    |
-| **S**       | Restart from beginning  |
-| **P** / **Space** | Toggle pause      |
-| **R**       | Seek back 30 seconds    |
-| **F**       | Seek forward 30 seconds |
-| **Left**    | Seek back 5 seconds     |
-| **Right**   | Seek forward 5 seconds  |
-| **Up**      | Speed +10% (max 300%)   |
-| **Down**    | Speed -10% (min 50%)    |
-| **0** / **Enter** | Speed reset to 100% |
-| **M**       | Toggle mute              |
+| Key               | Action                       |
+|-------------------|------------------------------|
+| **ESC**           | Quit                         |
+| **S**             | Restart from beginning       |
+| **P** / **Space** | Toggle pause                 |
+| **R**             | Seek back 30 seconds         |
+| **F**             | Seek forward 30 seconds      |
+| **Left**          | Seek back 5 seconds          |
+| **Right**         | Seek forward 5 seconds       |
+| **Up**            | Speed +10% (max 300%)        |
+| **Down**          | Speed -10% (min 50%)         |
+| **Enter**         | Speed reset to 100%          |
+| **M**             | Toggle mute                  |
+| **4**             | Pan left                     |
+| **6**             | Pan right                    |
+| **8**             | Pan up                       |
+| **2**             | Pan down                     |
+| **9** / **-**     | Zoom out 10% (min 100%)      |
+| **3** / **+**     | Zoom in 10% (max 400%)       |
+| **0**             | Reset pan and zoom           |
+| **A**             | Reset all (zoom, pan, speed) |
 
 ---
 

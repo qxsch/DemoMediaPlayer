@@ -16,7 +16,16 @@
  *   Right     – Seek forward 5 s
  *   Up        – Increase speed by 10% (max 300%)
  *   Down      – Decrease speed by 10% (min 50%)
- *   0 / Enter – Reset speed to 100%
+ *   Enter     – Reset speed to 100%
+ *
+ *   4 / Num4  – Pan left
+ *   6 / Num6  – Pan right
+ *   8 / Num8  – Pan up
+ *   2 / Num2  – Pan down
+ *   9 / Num9 / -  – Zoom out  10% (min 100%)
+ *   3 / Num3 / +  – Zoom in   10% (max 400%)
+ *   0 / Num0  – Reset pan and zoom
+ *   A         – Reset all (zoom, pan, and speed)
  */
 
 #include <windows.h>
@@ -27,6 +36,7 @@
 #include <string.h>
 #include <wchar.h>
 
+#include <math.h>
 #include <mpv/client.h>
 #include <dwmapi.h>
 #include <commctrl.h>
@@ -48,6 +58,11 @@
 #define SPEED_MIN        0.5
 #define SPEED_MAX        3.0
 #define SPEED_STEP       0.1
+
+#define ZOOM_MIN         1.0
+#define ZOOM_MAX         4.0
+#define ZOOM_STEP        0.1
+#define PAN_STEP         0.01
 
 /* Setup-dialog control IDs */
 #define IDC_FILE_EDIT    201
@@ -111,6 +126,11 @@ static int         g_nmons      = 0;
 
 static mpv_handle *g_mpv        = NULL;
 static HWND        g_player     = NULL;
+
+/* Pan & zoom state */
+static double      g_zoom       = 1.0;   /* 1.0 = 100%, 4.0 = 400% */
+static double      g_pan_x      = 0.0;
+static double      g_pan_y      = 0.0;
 
 /* Setup-dialog results */
 static wchar_t     g_sel_file[MAX_PATH_BUF];
@@ -201,6 +221,111 @@ static void change_playback_speed(double delta)
 
     speed = normalize_speed_step(speed + delta);
     set_playback_speed(speed);
+}
+
+/* ── Pan & zoom helpers ────────────────────────────────────── */
+
+/*
+ * Compute the maximum pan value for one axis.
+ *
+ *   r   = ratio of (video display size) / (window size) at zoom=1
+ *         • 1.0 for the axis the video fills exactly
+ *         • < 1.0 for the letterboxed / pillarboxed axis
+ *   zoom = current linear zoom factor (1.0 – 4.0)
+ *
+ * Returns 0 if the video still doesn't fill the window in that axis
+ * (even after zooming), otherwise the symmetric pan limit.
+ */
+static double max_pan_for_axis(double zoom, double r)
+{
+    double eff = zoom * r;          /* effective zoom for this axis */
+    if (eff <= 1.0) return 0.0;    /* still has black bars → no pan */
+    return (eff - 1.0) / (2.0 * eff);
+}
+
+/* Query mpv for video / window sizes and clamp g_pan_x / g_pan_y so
+   the video edge never moves past the window edge. */
+static void clamp_pan(void)
+{
+    if (!g_mpv) return;
+
+    if (g_zoom <= ZOOM_MIN) {
+        g_pan_x = 0.0;
+        g_pan_y = 0.0;
+        return;
+    }
+
+    int64_t vid_w = 0, vid_h = 0, osd_w = 0, osd_h = 0;
+    mpv_get_property(g_mpv, "video-params/w", MPV_FORMAT_INT64, &vid_w);
+    mpv_get_property(g_mpv, "video-params/h", MPV_FORMAT_INT64, &vid_h);
+    mpv_get_property(g_mpv, "osd-width",      MPV_FORMAT_INT64, &osd_w);
+    mpv_get_property(g_mpv, "osd-height",     MPV_FORMAT_INT64, &osd_h);
+
+    double mx, my;
+
+    if (vid_w > 0 && vid_h > 0 && osd_w > 0 && osd_h > 0) {
+        double vid_aspect = (double)vid_w / (double)vid_h;
+        double osd_aspect = (double)osd_w / (double)osd_h;
+
+        double r_x, r_y;
+        if (vid_aspect >= osd_aspect) {
+            /* Video wider than window: fills width, letterboxed vertically */
+            r_x = 1.0;
+            r_y = osd_aspect / vid_aspect;
+        } else {
+            /* Video taller than window: fills height, pillarboxed horizontally */
+            r_y = 1.0;
+            r_x = vid_aspect / osd_aspect;
+        }
+        mx = max_pan_for_axis(g_zoom, r_x);
+        my = max_pan_for_axis(g_zoom, r_y);
+    } else {
+        /* Fallback when dimensions are unavailable */
+        mx = (g_zoom - 1.0) / (2.0 * g_zoom);
+        my = mx;
+    }
+
+    if (g_pan_x >  mx) g_pan_x =  mx;
+    if (g_pan_x < -mx) g_pan_x = -mx;
+    if (g_pan_y >  my) g_pan_y =  my;
+    if (g_pan_y < -my) g_pan_y = -my;
+}
+
+static void apply_zoom_pan(void)
+{
+    if (!g_mpv) return;
+    clamp_pan();
+    double log2_zoom = log(g_zoom) / log(2.0);
+    mpv_set_property(g_mpv, "video-zoom",  MPV_FORMAT_DOUBLE, &log2_zoom);
+    mpv_set_property(g_mpv, "video-pan-x", MPV_FORMAT_DOUBLE, &g_pan_x);
+    mpv_set_property(g_mpv, "video-pan-y", MPV_FORMAT_DOUBLE, &g_pan_y);
+}
+
+static void change_zoom(double delta)
+{
+    g_zoom += delta;
+    if (g_zoom < ZOOM_MIN) g_zoom = ZOOM_MIN;
+    if (g_zoom > ZOOM_MAX) g_zoom = ZOOM_MAX;
+    apply_zoom_pan();   /* clamp_pan() called inside */
+}
+
+static void change_pan(double dx, double dy)
+{
+    /* Only allow panning when zoomed in */
+    if (g_zoom <= ZOOM_MIN) return;
+    /* Scale step inversely with zoom so movement feels the same
+       in screen-pixels regardless of zoom level. */
+    g_pan_x += dx / g_zoom;
+    g_pan_y += dy / g_zoom;
+    apply_zoom_pan();   /* clamp_pan() called inside */
+}
+
+static void reset_zoom_pan(void)
+{
+    g_zoom  = 1.0;
+    g_pan_x = 0.0;
+    g_pan_y = 0.0;
+    apply_zoom_pan();
 }
 
 /* ── Per-monitor DPI helpers ─────────────────────────────────── */
@@ -357,8 +482,6 @@ static LRESULT CALLBACK player_proc(HWND hw, UINT msg,
         case VK_DOWN:
             change_playback_speed(-SPEED_STEP);
             return 0;
-        case '0':
-        case VK_NUMPAD0:
         case VK_RETURN:
             set_playback_speed(1.0);
             return 0;
@@ -367,6 +490,27 @@ static LRESULT CALLBACK player_proc(HWND hw, UINT msg,
             if (g_mpv) mpv_command_async(g_mpv, 0, cmd);
             return 0;
         }
+        /* ── pan & zoom ────────────────────────────────────── */
+        case '4': case VK_NUMPAD4:
+            change_pan(PAN_STEP, 0);   return 0;
+        case '6': case VK_NUMPAD6:
+            change_pan(-PAN_STEP, 0);  return 0;
+        case '8': case VK_NUMPAD8:
+            change_pan(0, PAN_STEP);   return 0;
+        case '2': case VK_NUMPAD2:
+            change_pan(0, -PAN_STEP);  return 0;
+        case '9': case VK_NUMPAD9:
+        case VK_OEM_MINUS: case VK_SUBTRACT:
+            change_zoom(-ZOOM_STEP);   return 0;
+        case '3': case VK_NUMPAD3:
+        case VK_OEM_PLUS: case VK_ADD:
+            change_zoom(ZOOM_STEP);    return 0;
+        case '0': case VK_NUMPAD0:
+            reset_zoom_pan();          return 0;
+        case 'A':
+            reset_zoom_pan();
+            set_playback_speed(1.0);
+            return 0;
         }
         break;
 
@@ -1271,8 +1415,17 @@ static void show_help(void)
         L"  Right        Seek forward 5 seconds\r\n"
         L"  Up           Speed +10% (max 300%)\r\n"
         L"  Down         Speed -10% (min 50%)\r\n"
-        L"  0 / Enter    Reset speed to 100%\r\n"
-        L"  M            Toggle mute\r\n";
+        L"  Enter        Reset speed to 100%\r\n"
+        L"  M            Toggle mute\r\n"
+        L"\r\n"
+        L"  4            Pan left\r\n"
+        L"  6            Pan right\r\n"
+        L"  8            Pan up\r\n"
+        L"  2            Pan down\r\n"
+        L"  9 / -        Zoom out 10% (min 100%)\r\n"
+        L"  3 / +        Zoom in 10% (max 400%)\r\n"
+        L"  0            Reset pan and zoom\r\n"
+        L"  A            Reset all (zoom, pan, speed)\r\n";
 
     /* Register a simple window class for the help dialog. */
     static const wchar_t *cls = L"DMP_HelpWnd";
