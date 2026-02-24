@@ -15,6 +15,8 @@ Cross-compiled from Linux using Docker + mingw-w64.
 - **Command-line mode:** skip the dialog and go straight to fullscreen
 - **True fullscreen:** borderless, topmost window with hidden cursor
 - **Hardware acceleration:** automatic hardware decoding (`hwdec=auto`)
+- **Speed control:** slow down or speed up the video (e.g. for live demos)
+- **Pan and zoom:** focus on specific areas of the video (e.g. for live demos)
 - **Keyboard controls:**
 
 | Key               | Action                       |
