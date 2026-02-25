@@ -38,7 +38,12 @@ void playback_change_speed(Playback *pb, double delta);
 /* ── Mute ────────────────────────────────────────────────────── */
 
 void playback_set_mute(Playback *pb, int muted);
+/* ── Volume (0–100) ──────────────────────────────────────────── */
 
+void playback_set_volume(Playback *pb, int volume);
+void playback_change_volume(Playback *pb, int delta);
+int  playback_get_volume(Playback *pb);
+void playback_reset_volume(Playback *pb);
 /* ── Zoom / pan properties (called by panzoom module) ────────── */
 
 typedef struct {

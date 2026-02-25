@@ -187,7 +187,7 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE hp, LPWSTR cl, int cs)
 
     /* Apply initial mute state if requested. */
     if (muted)
-        playback_set_mute(pb, 1);
+        playback_set_volume(pb, 0);
 
     /* ── Main message loop ─────────────────────────────────────── */
     MSG m;

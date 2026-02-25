@@ -92,10 +92,18 @@ static LRESULT CALLBACK player_proc(HWND hw, UINT msg,
             playback_set_speed(ctx->pb, 1.0);
             return 0;
 
-        /* ── Mute toggle ─────────────────────────────────────── */
-        case 'M':
-            playback_cycle_mute(ctx->pb);
+        /* ── Volume ────────────────────────────────────────── */
+        case '1': case VK_NUMPAD1:
+            playback_change_volume(ctx->pb, VOLUME_STEP_PCT);
             return 0;
+        case '7': case VK_NUMPAD7:
+            playback_change_volume(ctx->pb, -VOLUME_STEP_PCT);
+            return 0;
+        case 'M': {
+            int vol = playback_get_volume(ctx->pb);
+            playback_set_volume(ctx->pb, vol >= 50 ? 0 : 100);
+            return 0;
+        }
 
         /* ── Pan ─────────────────────────────────────────────── */
         case '4': case VK_NUMPAD4:
@@ -128,6 +136,7 @@ static LRESULT CALLBACK player_proc(HWND hw, UINT msg,
         case 'A':
             panzoom_reset(&ctx->pz, ctx->pb);
             playback_set_speed(ctx->pb, 1.0);
+            playback_reset_volume(ctx->pb);
             return 0;
         }
         break;

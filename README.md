@@ -33,7 +33,9 @@ Cross-compiled from Linux using Docker + mingw-w64.
 | **Up**            | Speed +10% (max 300%)        |
 | **Down**          | Speed -10% (min 50%)         |
 | **Enter**         | Speed reset to 100%          |
-| **M**             | Toggle mute                  |
+| **1**             | Volume +10% (max 100%)       |
+| **7**             | Volume -10% (min 0%)         |
+| **M**             | Toggle volume (mute/unmute)  |
 | **4**             | Pan left                     |
 | **6**             | Pan right                    |
 | **8**             | Pan up                       |
@@ -41,7 +43,7 @@ Cross-compiled from Linux using Docker + mingw-w64.
 | **9** / **-**     | Zoom out 10% (min 100%)      |
 | **3** / **+**     | Zoom in 10% (max 400%)       |
 | **0**             | Reset pan and zoom           |
-| **A**             | Reset all (zoom, pan, speed) |
+| **A**             | Reset all (zoom, pan, speed, volume) |
 
 ---
 
@@ -193,6 +195,14 @@ When recording loads, a small floating control window appears:
 - **Pause / Resume** — pause or resume capture (audio and video)
 - **Capture mouse** checkbox — toggle mouse cursor visibility in the recording
 - **Blinking indicator** — red while recording, amber while paused, grey when idle
+- **Elapsed time** — HH:MM:SS display during recording (pauses excluded)
+
+### Global Hotkeys
+
+| Hotkey               | Action                         |
+|----------------------|--------------------------------|
+| **Ctrl+F9**          | Start / stop recording         |
+| **Ctrl+F10**         | Pause / resume recording       |
 
 ### Technical Details
 

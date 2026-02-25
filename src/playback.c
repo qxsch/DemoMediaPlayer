@@ -178,6 +178,48 @@ void playback_set_mute(Playback *pb, int muted)
     mpv_set_property(pb->mpv, "mute", MPV_FORMAT_FLAG, &muted);
 }
 
+/* ── Volume ──────────────────────────────────────────────────── */
+
+void playback_set_volume(Playback *pb, int volume)
+{
+    if (!pb || !pb->mpv) return;
+    if (volume < VOLUME_MIN_PCT) volume = VOLUME_MIN_PCT;
+    if (volume > VOLUME_MAX_PCT) volume = VOLUME_MAX_PCT;
+    double vol = (double)volume;
+    mpv_set_property(pb->mpv, "volume", MPV_FORMAT_DOUBLE, &vol);
+    /* Clear stale mute flag so volume change is audible */
+    int mute = 0;
+    mpv_set_property(pb->mpv, "mute", MPV_FORMAT_FLAG, &mute);
+}
+
+void playback_change_volume(Playback *pb, int delta)
+{
+    if (!pb || !pb->mpv) return;
+    playback_set_volume(pb, playback_get_volume(pb) + delta);
+}
+
+int playback_get_volume(Playback *pb)
+{
+    if (!pb || !pb->mpv) return VOLUME_MAX_PCT;
+    double vol = (double)VOLUME_MAX_PCT;
+    mpv_get_property(pb->mpv, "volume", MPV_FORMAT_DOUBLE, &vol);
+    return (int)(vol + 0.5);
+}
+
+void playback_reset_volume(Playback *pb)
+{
+    if (!pb || !pb->mpv) return;
+    /* Only reset volume if not muted — avoid surprising unmute.
+       Treat volume == 0 as effectively muted as well (M key sets
+       volume to 0 rather than toggling the mute flag). */
+    int muted = 0;
+    mpv_get_property(pb->mpv, "mute", MPV_FORMAT_FLAG, &muted);
+    if (!muted && playback_get_volume(pb) > VOLUME_MIN_PCT) {
+        double vol = (double)VOLUME_MAX_PCT;
+        mpv_set_property(pb->mpv, "volume", MPV_FORMAT_DOUBLE, &vol);
+    }
+}
+
 /* ── Zoom / pan properties ───────────────────────────────────── */
 
 BOOL playback_get_video_dims(Playback *pb, PlaybackVideoDims *dims)

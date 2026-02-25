@@ -25,6 +25,11 @@
 #define SPEED_MAX        (SPEED_MAX_PCT  / 100.0)
 #define SPEED_STEP       (SPEED_STEP_PCT / 100.0)
 
+/* ── Volume (0–100 %) ────────────────────────────────────────── */
+#define VOLUME_MIN_PCT   0
+#define VOLUME_MAX_PCT   100
+#define VOLUME_STEP_PCT  10
+
 /* ── Zoom & pan (integer % is the source of truth) ───────────── */
 #define ZOOM_MIN_PCT     100
 #define ZOOM_MAX_PCT     400
@@ -64,6 +69,8 @@
 #define REC_TICK_TIMER    2
 #define REC_TICK_INTERVAL 500   /* ms – blink interval */
 #define WM_REC_STOP_DONE  (WM_USER + 11)  /* async stop completed */
+#define HOTKEY_REC_TOGGLE 1                /* Ctrl+F9  start/stop   */
+#define HOTKEY_REC_PAUSE  2                /* Ctrl+F10 pause/resume */
 
 #define CLR_REC_ACTIVE    RGB(220, 38, 38)    /* red indicator    */
 #define CLR_REC_PAUSED    RGB(250, 190, 50)   /* amber / paused   */

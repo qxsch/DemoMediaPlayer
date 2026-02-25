@@ -44,6 +44,12 @@ typedef struct {
 
     /* Display info */
     wchar_t             info_line[512];
+
+    /* Elapsed time tracking */
+    ULONGLONG           rec_start_ms;
+    ULONGLONG           pause_start_ms;
+    ULONGLONG           total_paused_ms;
+    wchar_t             time_label[16];
 } RecCtlCtx;
 
 /* ── Async stop (runs recorder_stop + destroy off the UI thread) ── */
@@ -271,6 +277,20 @@ static void paint_window(HWND hw, RecCtlCtx *ctx)
     DrawTextW(hdc, ctx->info_line, -1, &ir,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
+    /* ── Elapsed time (right-aligned on the status line) ────── */
+    if (ctx->time_label[0] &&
+        (ctx->state == RS_RECORDING || ctx->state == RS_PAUSED)) {
+        SetTextColor(hdc, CLR_TEXT);
+        SelectObject(hdc, ctx->theme.ui_font);
+        RECT tmr;
+        tmr.left   = cr.right / 2;
+        tmr.top    = y - sdpi(ctx, 2);
+        tmr.right  = cr.right - mx;
+        tmr.bottom = y + sdpi(ctx, 22);
+        DrawTextW(hdc, ctx->time_label, -1, &tmr,
+                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    }
+
     EndPaint(hw, &ps);
 }
 
@@ -294,6 +314,10 @@ static LRESULT CALLBACK recctl_proc(HWND hw, UINT msg,
 
         /* Start blink timer */
         SetTimer(hw, REC_TICK_TIMER, REC_TICK_INTERVAL, NULL);
+
+        /* Register global hotkeys: Ctrl+F9 start/stop, Ctrl+F10 pause/resume */
+        RegisterHotKey(hw, HOTKEY_REC_TOGGLE, MOD_CONTROL, VK_F9);
+        RegisterHotKey(hw, HOTKEY_REC_PAUSE,  MOD_CONTROL, VK_F10);
         return 0;
     }
 
@@ -309,21 +333,34 @@ static LRESULT CALLBACK recctl_proc(HWND hw, UINT msg,
     case WM_ERASEBKGND:
         return 1;   /* we paint the entire background in WM_PAINT */
 
+    /* ── Global hotkeys (Ctrl+F9 / Ctrl+F10) ───────────────────── */
+    case WM_HOTKEY:
+        if (wp == HOTKEY_REC_TOGGLE)
+            SendMessageW(hw, WM_COMMAND,
+                         MAKEWPARAM(IDC_REC_STARTSTOP, BN_CLICKED), 0);
+        else if (wp == HOTKEY_REC_PAUSE)
+            SendMessageW(hw, WM_COMMAND,
+                         MAKEWPARAM(IDC_REC_PAUSE, BN_CLICKED), 0);
+        return 0;
+
     case WM_TIMER:
         if (wp == REC_TICK_TIMER) {
             ctx->blink_on = !ctx->blink_on;
-            /* Invalidate just the indicator area */
-            RECT dot_rc;
-            dot_rc.left   = sdpi(ctx, 12);
-            dot_rc.top    = sdpi(ctx, 8);
-            dot_rc.right  = sdpi(ctx, 40);
-            dot_rc.bottom = sdpi(ctx, 36);
-            InvalidateRect(hw, &dot_rc, FALSE);
+            /* Invalidate the status area (dot + text + elapsed time) */
+            {
+                RECT top_rc;
+                GetClientRect(hw, &top_rc);
+                top_rc.bottom = sdpi(ctx, 36);
+                InvalidateRect(hw, &top_rc, FALSE);
+            }
 
             /* Transition from STARTING to RECORDING once pipeline is active */
             if (ctx->state == RS_STARTING && ctx->rec &&
                 recorder_active(ctx->rec)) {
                 ctx->state = RS_RECORDING;
+                ctx->rec_start_ms    = GetTickCount64();
+                ctx->total_paused_ms = 0;
+                wcscpy(ctx->time_label, L"00:00:00");
                 update_buttons(hw, ctx);
             }
 
@@ -352,6 +389,18 @@ static LRESULT CALLBACK recctl_proc(HWND hw, UINT msg,
                         MessageBoxW(hw, msg, APP_TITLE, MB_ICONERROR);
                     }
                 }
+            }
+
+            /* Update elapsed time label */
+            if (ctx->state == RS_RECORDING || ctx->state == RS_PAUSED) {
+                ULONGLONG now = GetTickCount64();
+                ULONGLONG elapsed = now - ctx->rec_start_ms
+                                    - ctx->total_paused_ms;
+                if (ctx->state == RS_PAUSED)
+                    elapsed -= (now - ctx->pause_start_ms);
+                int secs = (int)(elapsed / 1000);
+                swprintf(ctx->time_label, 16, L"%02d:%02d:%02d",
+                         secs / 3600, (secs % 3600) / 60, secs % 60);
             }
         }
         return 0;
@@ -478,9 +527,12 @@ static LRESULT CALLBACK recctl_proc(HWND hw, UINT msg,
         case IDC_REC_PAUSE:
             if (ctx->state == RS_RECORDING) {
                 recorder_pause(ctx->rec);
+                ctx->pause_start_ms = GetTickCount64();
                 ctx->state = RS_PAUSED;
             } else if (ctx->state == RS_PAUSED) {
                 recorder_resume(ctx->rec);
+                ctx->total_paused_ms += GetTickCount64()
+                                        - ctx->pause_start_ms;
                 ctx->state = RS_RECORDING;
             }
             update_buttons(hw, ctx);
@@ -538,6 +590,8 @@ static LRESULT CALLBACK recctl_proc(HWND hw, UINT msg,
     }
 
     case WM_DESTROY:
+        UnregisterHotKey(hw, HOTKEY_REC_TOGGLE);
+        UnregisterHotKey(hw, HOTKEY_REC_PAUSE);
         KillTimer(hw, REC_TICK_TIMER);
         /* rec ownership is transferred to the stop thread;
            if still set here it means an abnormal path. */
