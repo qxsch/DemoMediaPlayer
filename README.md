@@ -18,7 +18,7 @@ Cross-compiled from Linux using Docker + mingw-w64.
 - **Speed control:** slow down or speed up the video (e.g. for live demos)
 - **Pan and zoom:** focus on specific areas of the video (e.g. for live demos)
 - **Taskbar:** show the real os taskbar and crop recorded taskbar out of the video (e.g. for live demos)
-- **Screen recording:** capture any screen to MP4 with system audio (H.264 + AAC)
+- **Screen recording:** capture any screen or custom region to MP4 with system audio (H.264 + AAC)
 - **Keyboard controls:**
 
 | Key               | Action                       |
@@ -191,6 +191,9 @@ mediaplayer.exe --record -f out.mp4 --disable-mouse-capture
 
 When recording loads, a small floating control window appears:
 
+- **Source picker** — dropdown with screen thumbnails to select a monitor, or "Custom" for an arbitrary region
+- **Custom region** — when "Custom" is selected, editable X / Y / W / H fields appear for precise coordinate entry
+- **Preview** — toggle button that shows a translucent overlay on the capture area; the overlay is draggable and resizable and feeds coordinates back into the fields in real time (dismiss with ESC, right-click, double-click, or after 5 s of inactivity)
 - **Record / Stop** — start or stop the recording
 - **Pause / Resume** — pause or resume capture (audio and video)
 - **Capture mouse** checkbox — toggle mouse cursor visibility in the recording
@@ -258,7 +261,8 @@ src/
 ├── identify.h/c    "Identify Screens" overlay (big numbers, auto-dismiss after 5 s)
 ├── help.h/c        Help/usage window with RichEdit control and inline-tag coloring
 ├── recorder.h/c    Screen recording: GDI capture + WASAPI loopback audio → MP4 via mpv (includes mpv/client.h)
-└── recctl.h/c      Recording control window (start/stop, pause, blinking indicator)
+├── recctl.h/c      Recording control window (source picker, custom region, start/stop, pause, indicator)
+└── rectview.h/c    Interactive rectangle overlay (movable/resizable capture-area preview)
 ```
 
 All module state is passed through explicit structs (`PlayerCtx`, `SetupCtx`,
