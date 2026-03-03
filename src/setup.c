@@ -182,6 +182,14 @@ static LRESULT CALLBACK setup_proc(HWND hw, UINT msg,
         theme_create_brushes(&ctx->theme);
         theme_create_fonts(&ctx->theme);
         build_ui(hw, cs->hInstance, ctx);
+
+        /* Add "Record…" to the system menu */
+        HMENU sys = GetSystemMenu(hw, FALSE);
+        if (sys) {
+            AppendMenuW(sys, MF_SEPARATOR, 0, NULL);
+            AppendMenuW(sys, MF_STRING, SC_RECORD,
+                        L"Record\u2026");
+        }
         return 0;
     }
 
@@ -291,6 +299,18 @@ static LRESULT CALLBACK setup_proc(HWND hw, UINT msg,
 
         case IDCANCEL:              /* ESC via IsDialogMessage */
             ctx->result->confirmed = FALSE;
+            DestroyWindow(hw);
+            return 0;
+        }
+        break;
+
+    case WM_SYSCOMMAND:
+        if ((wp & 0xFFF0) == SC_RECORD) {
+            ctx->result->screen = (int)SendDlgItemMessageW(
+                hw, IDC_SCREEN_COMBO, CB_GETCURSEL, 0, 0);
+            if (ctx->result->screen < 0) ctx->result->screen = 0;
+            ctx->result->record    = TRUE;
+            ctx->result->confirmed = TRUE;
             DestroyWindow(hw);
             return 0;
         }

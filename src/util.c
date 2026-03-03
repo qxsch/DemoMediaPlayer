@@ -37,3 +37,20 @@ BOOL browse_file(HWND owner, wchar_t *buf, int buflen)
     ofn.Flags        = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
     return GetOpenFileNameW(&ofn);
 }
+
+/* ── Save-file dialog (recording output) ─────────────────────── */
+
+BOOL browse_save_file(HWND owner, wchar_t *buf, int buflen)
+{
+    OPENFILENAMEW ofn;
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize  = sizeof(ofn);
+    ofn.hwndOwner    = owner;
+    ofn.lpstrFilter   = L"MP4 Video\0*.mp4\0All Files\0*.*\0";
+    ofn.lpstrFile     = buf;
+    ofn.nMaxFile      = buflen;
+    ofn.lpstrTitle    = L"Save Recording As";
+    ofn.lpstrDefExt   = L"mp4";
+    ofn.Flags         = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+    return GetSaveFileNameW(&ofn);
+}

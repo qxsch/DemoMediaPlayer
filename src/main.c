@@ -47,22 +47,18 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE hp, LPWSTR cl, int cs)
 
     /* ── Recording mode ───────────────────────────────────────── */
     if (args.record) {
-        if (!args.has_file) {
-            MessageBoxW(NULL,
-                        L"--file <recording.mp4> is required with --record.",
-                        APP_TITLE, MB_ICONERROR);
-            return 1;
-        }
-
         int scr = args.has_screen ? args.screen : 0;
         if (scr < 0 || scr >= nmons) scr = 0;
 
-        /* Convert file path to UTF-8 for mpv. */
-        char *u8_out = to_utf8(args.file);
-        if (!u8_out) {
-            MessageBoxW(NULL, L"Invalid file path encoding.",
-                        APP_TITLE, MB_ICONERROR);
-            return 1;
+        /* Convert file path to UTF-8 for mpv (NULL if not given). */
+        char *u8_out = NULL;
+        if (args.has_file) {
+            u8_out = to_utf8(args.file);
+            if (!u8_out) {
+                MessageBoxW(NULL, L"Invalid file path encoding.",
+                            APP_TITLE, MB_ICONERROR);
+                return 1;
+            }
         }
 
         /* Detect audio loopback device. */
@@ -92,7 +88,7 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE hp, LPWSTR cl, int cs)
         rp.nmons         = nmons;
         rp.monitors      = monitors;
         rp.output_u8     = u8_out;
-        rp.output_w      = args.file;
+        rp.output_w      = args.has_file ? args.file : NULL;
         rp.fps           = fps;
         rp.audio_u8      = u8_audio;
         rp.audio_w       = adev_w[0] ? adev_w : NULL;
@@ -136,6 +132,41 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE hp, LPWSTR cl, int cs)
         {
             return 0;   /* user cancelled */
         }
+
+        /* User chose Record from the system menu */
+        if (sr.record) {
+            int rec_scr = sr.screen;
+            if (rec_scr < 0 || rec_scr >= nmons) rec_scr = 0;
+
+            char   *u8_audio = NULL;
+            wchar_t adev_w[256] = {0};
+            wchar_t adev[256] = {0};
+            recorder_find_audio_device(adev, 256);
+            if (adev[0]) {
+                u8_audio = to_utf8(adev);
+                wcscpy(adev_w, adev);
+            }
+
+            RecCtlParams rp;
+            ZeroMemory(&rp, sizeof(rp));
+            rp.hi            = hi;
+            rp.capture_rect  = monitors[rec_scr].rect;
+            rp.screen_index  = rec_scr;
+            rp.nmons         = nmons;
+            rp.monitors      = monitors;
+            rp.output_u8     = NULL;
+            rp.output_w      = NULL;
+            rp.fps           = REC_DEFAULT_FPS;
+            rp.audio_u8      = u8_audio;
+            rp.audio_w       = adev_w[0] ? adev_w : NULL;
+            rp.no_audio      = FALSE;
+            rp.no_mouse      = FALSE;
+
+            int ret = recctl_run(&rp);
+            free(u8_audio);
+            return ret;
+        }
+
         fpath          = sr.file;
         scr            = sr.screen;
         muted          = sr.muted;

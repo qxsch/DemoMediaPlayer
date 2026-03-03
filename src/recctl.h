@@ -20,8 +20,8 @@ typedef struct {
     int         screen_index;   /* 0-based screen number        */
     int         nmons;          /* total monitor count           */
     const MonInfo *monitors;
-    const char *output_u8;      /* UTF-8 output path            */
-    const wchar_t *output_w;    /* wide output path (display)   */
+    const char *output_u8;      /* UTF-8 output path (or NULL)  */
+    const wchar_t *output_w;    /* wide output path (or NULL)   */
     int         fps;
     const char *audio_u8;       /* UTF-8 audio device or NULL   */
     const wchar_t *audio_w;     /* wide audio label or NULL     */

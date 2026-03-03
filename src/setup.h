@@ -18,6 +18,7 @@ typedef struct {
     BOOL    crop_taskbar;       /* crop taskbar from video    */
     int     crop_taskbar_px;    /* source-pixel height        */
     BOOL    confirmed;          /* TRUE if user clicked Play  */
+    BOOL    record;             /* TRUE if user chose Record  */
 } SetupResult;
 
 /* Show the setup dialog and run its message loop.

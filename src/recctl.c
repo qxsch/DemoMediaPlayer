@@ -15,6 +15,7 @@
 #include "rectview.h"
 #include "resource.h"
 #include "theme.h"
+#include "util.h"
 
 #include <commctrl.h>
 #include <dwmapi.h>
@@ -60,6 +61,10 @@ typedef struct {
     HBITMAP             thumbs[DMP_MAX_MONITORS]; /* screen thumbnails */
     int                 thumb_w;    /* thumbnail width  (pixels) */
     int                 thumb_h;    /* thumbnail height (pixels) */
+
+    /* Output file (mutable – may start empty) */
+    wchar_t             output_path[MAX_PATH_BUF];
+    char               *output_u8_buf;   /* heap-allocated UTF-8 path */
 } RecCtlCtx;
 
 /* ── Async stop (runs recorder_stop + destroy off the UI thread) ── */
@@ -188,8 +193,8 @@ static void toggle_custom_fields(HWND hw, RecCtlCtx *ctx, BOOL show)
     ctx->custom_vis = show;
     ctx->theme.hover_btn = NULL;
 
-    /* Compute new client height: 200 base (non-custom) or 240 (custom) */
-    int base_ch = show ? 240 : 200;
+    /* Compute new client height: 264 base (non-custom) or 304 (custom) */
+    int base_ch = show ? 304 : 264;
     RECT adj = {0, 0, 100,
                 MulDiv(base_ch, (int)ctx->theme.dpi, 96)};
     AdjustWindowRectEx(&adj,
@@ -251,6 +256,37 @@ static void build_ui(HWND hw, HINSTANCE hi, RecCtlCtx *ctx)
 
     /* Running y cursor — starts below the painted status / info area */
     int y = sdpi(ctx, 62);
+
+    /* ── Output file ──────────────────────────────────────────── */
+    {
+        int browse_w = sdpi(ctx, 80);
+        int edit_w   = ew - browse_w - sdpi(ctx, 8);
+
+        c = CreateWindowExW(0, L"STATIC", L"OUTPUT FILE",
+                WS_CHILD | WS_VISIBLE | SS_LEFT,
+                mx, y, ew, sdpi(ctx, 16), hw, NULL, hi, NULL);
+        SendMessageW(c, WM_SETFONT, (WPARAM)ctx->theme.label_font, TRUE);
+        y += sdpi(ctx, 22);
+
+        c = CreateWindowExW(0, L"EDIT", ctx->output_path,
+                WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_READONLY
+                | (recording ? WS_DISABLED : 0),
+                mx, y, edit_w, sdpi(ctx, 30),
+                hw, (HMENU)(intptr_t)IDC_REC_FILE_EDIT, hi, NULL);
+        SendMessageW(c, WM_SETFONT, (WPARAM)ctx->theme.ui_font, TRUE);
+        SendMessageW(c, EM_SETMARGINS,
+                     EC_LEFTMARGIN | EC_RIGHTMARGIN,
+                     MAKELPARAM(sdpi(ctx, 8), sdpi(ctx, 8)));
+
+        c = CreateWindowExW(0, L"BUTTON", L"Browse\u2026",
+                WS_CHILD | WS_VISIBLE | BS_OWNERDRAW
+                | (recording ? WS_DISABLED : 0),
+                mx + edit_w + sdpi(ctx, 8), y, browse_w, sdpi(ctx, 30),
+                hw, (HMENU)(intptr_t)IDC_REC_BROWSE, hi, NULL);
+        SendMessageW(c, WM_SETFONT, (WPARAM)ctx->theme.ui_font, TRUE);
+        theme_subclass_button(&ctx->theme, c);
+        y += sdpi(ctx, 42);
+    }
 
     /* ── Source combo box ─────────────────────────────────────── */
     int combo_vis_h = sdpi(ctx, 36);  /* matches WM_MEASUREITEM */
@@ -408,6 +444,10 @@ static void update_buttons(HWND hw, RecCtlCtx *ctx)
     }
     HWND pv = GetDlgItem(hw, IDC_REC_PREVIEW);
     if (pv) EnableWindow(pv, idle);
+    HWND fe = GetDlgItem(hw, IDC_REC_FILE_EDIT);
+    if (fe) EnableWindow(fe, idle);
+    HWND fb = GetDlgItem(hw, IDC_REC_BROWSE);
+    if (fb) EnableWindow(fb, idle);
 
     InvalidateRect(btn_ss, NULL, FALSE);
     InvalidateRect(btn_pa, NULL, FALSE);
@@ -819,16 +859,47 @@ static LRESULT CALLBACK recctl_proc(HWND hw, UINT msg,
             }
             return 0;
 
+        /* ── Browse for output file ──────────────────────────────── */
+        case IDC_REC_BROWSE: {
+            wchar_t tmp[MAX_PATH_BUF];
+            wcscpy(tmp, ctx->output_path);
+            if (browse_save_file(hw, tmp, MAX_PATH_BUF)) {
+                wcscpy(ctx->output_path, tmp);
+                SetDlgItemTextW(hw, IDC_REC_FILE_EDIT, tmp);
+            }
+            return 0;
+        }
+
         case IDC_REC_STARTSTOP:
             if (ctx->state == RS_IDLE) {
                 /* If custom mode, finalise rect from edit fields */
                 if (ctx->sel_mode >= ctx->params->nmons)
                     read_custom_fields(hw, ctx);
 
+                /* Auto-browse for output file if none selected */
+                if (!ctx->output_path[0]) {
+                    wchar_t tmp[MAX_PATH_BUF] = {0};
+                    if (browse_save_file(hw, tmp, MAX_PATH_BUF)) {
+                        wcscpy(ctx->output_path, tmp);
+                        SetDlgItemTextW(hw, IDC_REC_FILE_EDIT, tmp);
+                    } else {
+                        return 0;
+                    }
+                }
+
+                /* Convert output path to UTF-8 */
+                free(ctx->output_u8_buf);
+                ctx->output_u8_buf = to_utf8(ctx->output_path);
+                if (!ctx->output_u8_buf) {
+                    MessageBoxW(hw, L"Invalid output file path.",
+                                APP_TITLE, MB_ICONERROR);
+                    return 0;
+                }
+
                 /* Start recording */
                 ctx->rec = recorder_create(
                     &ctx->cur_rect,
-                    ctx->params->output_u8,
+                    ctx->output_u8_buf,
                     ctx->params->fps,
                     ctx->params->audio_u8,
                     ctx->mouse_cap);
@@ -837,7 +908,7 @@ static LRESULT CALLBACK recctl_proc(HWND hw, UINT msg,
                     /* Retry without audio */
                     ctx->rec = recorder_create(
                         &ctx->cur_rect,
-                        ctx->params->output_u8,
+                        ctx->output_u8_buf,
                         ctx->params->fps,
                         NULL,
                         ctx->mouse_cap);
@@ -967,6 +1038,8 @@ static LRESULT CALLBACK recctl_proc(HWND hw, UINT msg,
         UnregisterHotKey(hw, HOTKEY_REC_TOGGLE);
         UnregisterHotKey(hw, HOTKEY_REC_PAUSE);
         KillTimer(hw, REC_TICK_TIMER);
+        free(ctx->output_u8_buf);
+        ctx->output_u8_buf = NULL;
         /* rec ownership is transferred to the stop thread;
            if still set here it means an abnormal path. */
         if (ctx->rec) {
@@ -1012,16 +1085,19 @@ int recctl_run(const RecCtlParams *params)
     ctx.cur_rect  = params->capture_rect;
     ctx.thumb_w   = 64;
     ctx.thumb_h   = 36;
+    if (params->output_w && params->output_w[0])
+        wcscpy(ctx.output_path, params->output_w);
+    ctx.output_u8_buf = NULL;
     capture_thumbnails(&ctx);
 
-    CursorWindowPos wp = center_on_cursor(440, 200);
+    CursorWindowPos wp = center_on_cursor(440, 264);
 
     /* center_on_cursor treats base_h as total window size, but we need
        200 as *client* height.  Adjust for the title bar / borders. */
     {
         DWORD style   = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU
                         | WS_MINIMIZEBOX;
-        int client_h  = MulDiv(200, (int)wp.dpi, 96);
+        int client_h  = MulDiv(264, (int)wp.dpi, 96);
         RECT adj      = {0, 0, wp.w, client_h};
         AdjustWindowRectEx(&adj, style, FALSE, WS_EX_TOPMOST);
         int real_h = adj.bottom - adj.top;

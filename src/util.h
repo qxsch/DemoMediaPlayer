@@ -14,4 +14,9 @@ char *to_utf8(const wchar_t *w);
    Returns TRUE if the user selected a file; result in buf. */
 BOOL browse_file(HWND owner, wchar_t *buf, int buflen);
 
+/* Show a standard "Save File" dialog for recording output.
+   buf is used as the initial filename and receives the result.
+   Returns TRUE if the user picked a path. */
+BOOL browse_save_file(HWND owner, wchar_t *buf, int buflen);
+
 #endif /* DMP_UTIL_H */
