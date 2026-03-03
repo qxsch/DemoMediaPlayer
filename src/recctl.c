@@ -12,6 +12,7 @@
 #include "constants.h"
 #include "monitors.h"
 #include "recorder.h"
+#include "rectview.h"
 #include "resource.h"
 #include "theme.h"
 
@@ -21,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wchar.h>
 
 /* ── Recording states ────────────────────────────────────────── */
 
@@ -50,6 +52,14 @@ typedef struct {
     ULONGLONG           pause_start_ms;
     ULONGLONG           total_paused_ms;
     wchar_t             time_label[16];
+
+    /* Source selection */
+    int                 sel_mode;   /* 0..nmons-1 = screen, nmons = custom */
+    RECT                cur_rect;   /* mutable capture rectangle */
+    BOOL                custom_vis; /* custom-rect fields visible */
+    HBITMAP             thumbs[DMP_MAX_MONITORS]; /* screen thumbnails */
+    int                 thumb_w;    /* thumbnail width  (pixels) */
+    int                 thumb_h;    /* thumbnail height (pixels) */
 } RecCtlCtx;
 
 /* ── Async stop (runs recorder_stop + destroy off the UI thread) ── */
@@ -70,6 +80,8 @@ static DWORD WINAPI stop_thread_proc(LPVOID param)
 }
 
 static void update_buttons(HWND hw, RecCtlCtx *ctx);   /* forward decl */
+static BOOL CALLBACK destroy_children_cb(HWND child, LPARAM lp);
+static void build_ui(HWND hw, HINSTANCE hi, RecCtlCtx *ctx);
 
 static void begin_async_stop(HWND hw, RecCtlCtx *ctx)
 {
@@ -105,13 +117,116 @@ static int sdpi(const RecCtlCtx *ctx, int v)
 
 static void build_info(RecCtlCtx *ctx)
 {
-    const RecCtlParams *p = ctx->params;
-    int w = (int)(p->capture_rect.right  - p->capture_rect.left);
-    int h = (int)(p->capture_rect.bottom - p->capture_rect.top);
+    int w = (int)(ctx->cur_rect.right  - ctx->cur_rect.left);
+    int h = (int)(ctx->cur_rect.bottom - ctx->cur_rect.top);
 
-    swprintf(ctx->info_line, 512,
-             L"Screen %d  \u00B7  %d\u00D7%d  \u00B7  %d fps  \u00B7  H.265 CRF %d",
-             p->screen_index + 1, w, h, p->fps, REC_DEFAULT_CRF);
+    if (ctx->sel_mode < ctx->params->nmons) {
+        swprintf(ctx->info_line, 512,
+                 L"Screen %d  \u00B7  %d\u00D7%d  \u00B7  %d fps  \u00B7  H.265 CRF %d",
+                 ctx->sel_mode + 1, w, h, ctx->params->fps, REC_DEFAULT_CRF);
+    } else {
+        swprintf(ctx->info_line, 512,
+                 L"Custom  \u00B7  %d\u00D7%d  at (%d,%d)  \u00B7  %d fps  \u00B7  H.265 CRF %d",
+                 w, h, (int)ctx->cur_rect.left, (int)ctx->cur_rect.top,
+                 ctx->params->fps, REC_DEFAULT_CRF);
+    }
+}
+
+/* ── Capture screen thumbnails (once) ────────────────────────── */
+
+static void capture_thumbnails(RecCtlCtx *ctx)
+{
+    HDC hdc_scr = GetDC(NULL);
+    for (int i = 0; i < ctx->params->nmons; i++) {
+        const RECT *mr = &ctx->params->monitors[i].rect;
+        int sw = (int)(mr->right  - mr->left);
+        int sh = (int)(mr->bottom - mr->top);
+        if (sw < 1 || sh < 1) continue;
+
+        HDC hdc_full  = CreateCompatibleDC(hdc_scr);
+        HBITMAP bfull  = CreateCompatibleBitmap(hdc_scr, sw, sh);
+        HBITMAP ofull  = (HBITMAP)SelectObject(hdc_full, bfull);
+        BitBlt(hdc_full, 0, 0, sw, sh,
+               hdc_scr, mr->left, mr->top, SRCCOPY);
+
+        HDC hdc_th     = CreateCompatibleDC(hdc_scr);
+        HBITMAP bthumb  = CreateCompatibleBitmap(hdc_scr,
+                                                  ctx->thumb_w,
+                                                  ctx->thumb_h);
+        HBITMAP othumb  = (HBITMAP)SelectObject(hdc_th, bthumb);
+        SetStretchBltMode(hdc_th, HALFTONE);
+        SetBrushOrgEx(hdc_th, 0, 0, NULL);
+        StretchBlt(hdc_th, 0, 0, ctx->thumb_w, ctx->thumb_h,
+                   hdc_full, 0, 0, sw, sh, SRCCOPY);
+
+        SelectObject(hdc_th, othumb);
+        SelectObject(hdc_full, ofull);
+        DeleteObject(bfull);
+        DeleteDC(hdc_full);
+        DeleteDC(hdc_th);
+
+        ctx->thumbs[i] = bthumb;
+    }
+    ReleaseDC(NULL, hdc_scr);
+}
+
+static void free_thumbnails(RecCtlCtx *ctx)
+{
+    for (int i = 0; i < DMP_MAX_MONITORS; i++) {
+        if (ctx->thumbs[i]) {
+            DeleteObject(ctx->thumbs[i]);
+            ctx->thumbs[i] = NULL;
+        }
+    }
+}
+
+/* ── Show / hide custom rect fields & resize window ──────────── */
+
+static void toggle_custom_fields(HWND hw, RecCtlCtx *ctx, BOOL show)
+{
+    if (ctx->custom_vis == show) return;
+    ctx->custom_vis = show;
+    ctx->theme.hover_btn = NULL;
+
+    /* Compute new client height: 200 base (non-custom) or 240 (custom) */
+    int base_ch = show ? 240 : 200;
+    RECT adj = {0, 0, 100,
+                MulDiv(base_ch, (int)ctx->theme.dpi, 96)};
+    AdjustWindowRectEx(&adj,
+                       WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+                       FALSE, WS_EX_TOPMOST);
+    int new_h = adj.bottom - adj.top;
+
+    RECT wr;
+    GetWindowRect(hw, &wr);
+    SetWindowPos(hw, NULL, 0, 0, wr.right - wr.left, new_h,
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+    /* Rebuild all controls at correct positions */
+    EnumChildWindows(hw, destroy_children_cb, 0);
+    build_ui(hw, (HINSTANCE)GetWindowLongPtrW(hw, GWLP_HINSTANCE), ctx);
+    InvalidateRect(hw, NULL, TRUE);
+}
+
+/* ── Read custom-rect fields into cur_rect ───────────────────── */
+
+static void read_custom_fields(HWND hw, RecCtlCtx *ctx)
+{
+    wchar_t buf[32];
+    GetDlgItemTextW(hw, IDC_REC_CUSTOM_X, buf, 32);
+    int cx = _wtoi(buf);
+    GetDlgItemTextW(hw, IDC_REC_CUSTOM_Y, buf, 32);
+    int cy = _wtoi(buf);
+    GetDlgItemTextW(hw, IDC_REC_CUSTOM_W, buf, 32);
+    int cw = _wtoi(buf);
+    GetDlgItemTextW(hw, IDC_REC_CUSTOM_H, buf, 32);
+    int ch = _wtoi(buf);
+    if (cw < 16) cw = 16;
+    if (ch < 16) ch = 16;
+    ctx->cur_rect.left   = cx;
+    ctx->cur_rect.top    = cy;
+    ctx->cur_rect.right  = cx + cw;
+    ctx->cur_rect.bottom = cy + ch;
 }
 
 /* ── Rebuild child controls at current DPI ───────────────────── */
@@ -131,16 +246,100 @@ static void build_ui(HWND hw, HINSTANCE hi, RecCtlCtx *ctx)
     int mx = sdpi(ctx, 20);
     int ew = cw - 2 * mx;
     int gap = sdpi(ctx, 10);
-    int btn_h = sdpi(ctx, 38);
     HWND c;
+    BOOL recording = (ctx->state != RS_IDLE);
+
+    /* Running y cursor — starts below the painted status / info area */
+    int y = sdpi(ctx, 62);
+
+    /* ── Source combo box ─────────────────────────────────────── */
+    int combo_vis_h = sdpi(ctx, 36);  /* matches WM_MEASUREITEM */
+    int combo_drop_h = combo_vis_h * (ctx->params->nmons + 2);
+
+    c = CreateWindowExW(0, L"COMBOBOX", NULL,
+            WS_CHILD | WS_VISIBLE
+            | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED
+            | CBS_HASSTRINGS | WS_VSCROLL
+            | (recording ? WS_DISABLED : 0),
+            mx, y, ew, combo_drop_h,
+            hw, (HMENU)(intptr_t)IDC_REC_SOURCE, hi, NULL);
+    SendMessageW(c, WM_SETFONT, (WPARAM)ctx->theme.ui_font, TRUE);
+    SetWindowTheme(c, L"DarkMode_CFD", NULL);
+
+    /* Populate: one item per screen + "Custom" */
+    for (int i = 0; i < ctx->params->nmons; i++) {
+        const RECT *mr = &ctx->params->monitors[i].rect;
+        wchar_t label[128];
+        swprintf(label, 128, L"Screen %d  (%d \u00D7 %d)",
+                 i + 1,
+                 (int)(mr->right - mr->left),
+                 (int)(mr->bottom - mr->top));
+        SendMessageW(c, CB_ADDSTRING, 0, (LPARAM)label);
+    }
+    SendMessageW(c, CB_ADDSTRING, 0, (LPARAM)L"Custom\u2026");
+    SendMessageW(c, CB_SETCURSEL, (WPARAM)ctx->sel_mode, 0);
+
+    y += combo_vis_h + sdpi(ctx, 10);  /* advance past collapsed combo */
+
+    /* ── Custom rect fields (hidden unless sel==custom) ───────── */
+    int lbl_w = sdpi(ctx, 18);
+    int ed_w  = sdpi(ctx, 48);
+    int fld_gap = sdpi(ctx, 6);
+    int fld_h = sdpi(ctx, 26);
+    DWORD vis  = ctx->custom_vis ? WS_VISIBLE : 0;
+    int fx = mx;
+
+    const wchar_t *labels[] = { L"X:", L"Y:", L"W:", L"H:" };
+    int edit_ids[] = { IDC_REC_CUSTOM_X, IDC_REC_CUSTOM_Y,
+                       IDC_REC_CUSTOM_W, IDC_REC_CUSTOM_H };
+    int lbl_ids[] = { 3200, 3201, 3202, 3203 };
+    int vals[4];
+    vals[0] = (int)ctx->cur_rect.left;
+    vals[1] = (int)ctx->cur_rect.top;
+    vals[2] = (int)(ctx->cur_rect.right  - ctx->cur_rect.left);
+    vals[3] = (int)(ctx->cur_rect.bottom - ctx->cur_rect.top);
+
+    for (int i = 0; i < 4; i++) {
+        /* Label */
+        c = CreateWindowExW(0, L"STATIC", labels[i],
+                WS_CHILD | vis | SS_RIGHT,
+                fx, y + sdpi(ctx, 3), lbl_w, fld_h,
+                hw, (HMENU)(intptr_t)lbl_ids[i], hi, NULL);
+        SendMessageW(c, WM_SETFONT, (WPARAM)ctx->theme.label_font, TRUE);
+        fx += lbl_w + sdpi(ctx, 2);
+
+        /* Edit */
+        wchar_t val[16];
+        swprintf(val, 16, L"%d", vals[i]);
+        c = CreateWindowExW(0, L"EDIT", val,
+                WS_CHILD | vis | ES_NUMBER | ES_AUTOHSCROLL | WS_BORDER
+                | (recording ? WS_DISABLED : 0),
+                fx, y, ed_w, fld_h,
+                hw, (HMENU)(intptr_t)edit_ids[i], hi, NULL);
+        SendMessageW(c, WM_SETFONT, (WPARAM)ctx->theme.ui_font, TRUE);
+        fx += ed_w + fld_gap;
+    }
+
+    /* Preview button */
+    int pv_w = sdpi(ctx, 80);
+    c = CreateWindowExW(0, L"BUTTON", L"Preview \u25B7",
+            WS_CHILD | vis | BS_OWNERDRAW
+            | (recording ? WS_DISABLED : 0),
+            fx, y, pv_w, fld_h,
+            hw, (HMENU)(intptr_t)IDC_REC_PREVIEW, hi, NULL);
+    SendMessageW(c, WM_SETFONT, (WPARAM)ctx->theme.ui_font, TRUE);
+    theme_subclass_button(&ctx->theme, c);
+
+    if (ctx->custom_vis)
+        y += fld_h + sdpi(ctx, 10);  /* advance past custom row */
 
     /* ── Start/Stop button ────────────────────────────────────── */
-    int y = sdpi(ctx, 60);
+    int btn_h = sdpi(ctx, 38);
     int btn_w = (ew - gap) / 2;
 
     const wchar_t *start_label =
         (ctx->state == RS_IDLE) ? L"\u25CF  Record" : L"\u25A0  Stop";
-    BOOL ss_disabled = (ctx->state == RS_STARTING);  /* can't stop during init */
+    BOOL ss_disabled = (ctx->state == RS_STARTING);
 
     c = CreateWindowExW(0, L"BUTTON", start_label,
             WS_CHILD | WS_VISIBLE | BS_OWNERDRAW
@@ -157,17 +356,18 @@ static void build_ui(HWND hw, HINSTANCE hi, RecCtlCtx *ctx)
     c = CreateWindowExW(0, L"BUTTON", pause_label,
             WS_CHILD | WS_VISIBLE | BS_OWNERDRAW
             | ((ctx->state == RS_RECORDING || ctx->state == RS_PAUSED)
-               ? 0 : WS_DISABLED),  /* disabled in IDLE/STARTING/STOPPED */
+               ? 0 : WS_DISABLED),
             mx + btn_w + gap, y, ew - btn_w - gap, btn_h,
             hw, (HMENU)(intptr_t)IDC_REC_PAUSE, hi, NULL);
     SendMessageW(c, WM_SETFONT, (WPARAM)ctx->theme.ui_font, TRUE);
     theme_subclass_button(&ctx->theme, c);
 
+    y += btn_h + sdpi(ctx, 12);
+
     /* ── Mouse capture checkbox ────────────────────────────────── */
-    int cb_y = y + btn_h + sdpi(ctx, 8);
     c = CreateWindowExW(0, L"BUTTON", L"Capture mouse cursor",
             WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-            mx, cb_y, ew, sdpi(ctx, 24),
+            mx, y, ew, sdpi(ctx, 24),
             hw, (HMENU)(intptr_t)IDC_REC_MOUSE, hi, NULL);
     SendMessageW(c, WM_SETFONT, (WPARAM)ctx->theme.ui_font, TRUE);
     SetWindowTheme(c, L"DarkMode_Explorer", NULL);
@@ -195,6 +395,19 @@ static void update_buttons(HWND hw, RecCtlCtx *ctx)
     BOOL pa_enabled = (ctx->state == RS_RECORDING ||
                        ctx->state == RS_PAUSED);
     EnableWindow(btn_pa, pa_enabled);
+
+    /* Disable source selection while recording */
+    BOOL idle = (ctx->state == RS_IDLE);
+    HWND combo = GetDlgItem(hw, IDC_REC_SOURCE);
+    if (combo) EnableWindow(combo, idle);
+    int edit_ids[] = { IDC_REC_CUSTOM_X, IDC_REC_CUSTOM_Y,
+                       IDC_REC_CUSTOM_W, IDC_REC_CUSTOM_H };
+    for (int i = 0; i < 4; i++) {
+        HWND e = GetDlgItem(hw, edit_ids[i]);
+        if (e) EnableWindow(e, idle);
+    }
+    HWND pv = GetDlgItem(hw, IDC_REC_PREVIEW);
+    if (pv) EnableWindow(pv, idle);
 
     InvalidateRect(btn_ss, NULL, FALSE);
     InvalidateRect(btn_pa, NULL, FALSE);
@@ -309,6 +522,9 @@ static LRESULT CALLBACK recctl_proc(HWND hw, UINT msg,
         ctx->theme.dpi = dpi_for_window(hw);
         theme_create_brushes(&ctx->theme);
         theme_create_fonts(&ctx->theme);
+        /* Scale thumbnail dimensions to current DPI */
+        ctx->thumb_w = dpi_scale(64, ctx->theme.dpi);
+        ctx->thumb_h = dpi_scale(36, ctx->theme.dpi);
         build_info(ctx);
         build_ui(hw, cs->hInstance, ctx);
 
@@ -405,11 +621,81 @@ static LRESULT CALLBACK recctl_proc(HWND hw, UINT msg,
         }
         return 0;
 
-    /* ── Owner-draw buttons ────────────────────────────────────── */
+    /* ── Owner-draw combo (source selector with thumbnails) ────── */
+    case WM_MEASUREITEM: {
+        MEASUREITEMSTRUCT *mi = (MEASUREITEMSTRUCT *)lp;
+        if (mi->CtlType == ODT_COMBOBOX) {
+            mi->itemHeight = sdpi(ctx, 36);
+            return TRUE;
+        }
+        break;
+    }
+
     case WM_DRAWITEM: {
         DRAWITEMSTRUCT *di = (DRAWITEMSTRUCT *)lp;
+
+        /* ── Combo box items (screen thumbnails + text) ──────── */
+        if (di->CtlType == ODT_COMBOBOX &&
+            di->CtlID == IDC_REC_SOURCE) {
+            BOOL selected = (di->itemState & ODS_SELECTED);
+            COLORREF bg = selected ? CLR_ACCENT : CLR_INPUT_BG;
+            HBRUSH br = CreateSolidBrush(bg);
+            FillRect(di->hDC, &di->rcItem, br);
+            DeleteObject(br);
+
+            if (di->itemID != (UINT)-1) {
+                int pad = sdpi(ctx, 4);
+                int tx  = di->rcItem.left + pad;
+
+                /* Draw thumbnail for screen items */
+                int idx = (int)di->itemID;
+                if (idx < ctx->params->nmons && ctx->thumbs[idx]) {
+                    int th = (di->rcItem.bottom - di->rcItem.top) - 2 * pad;
+                    int tw = MulDiv(th, 16, 9);  /* 16:9 aspect */
+                    if (tw > ctx->thumb_w) tw = ctx->thumb_w;
+                    if (th > ctx->thumb_h) th = ctx->thumb_h;
+                    int ty = di->rcItem.top + pad;
+
+                    HDC hdc_mem = CreateCompatibleDC(di->hDC);
+                    HBITMAP old_bm = (HBITMAP)SelectObject(hdc_mem,
+                                                          ctx->thumbs[idx]);
+                    SetStretchBltMode(di->hDC, HALFTONE);
+                    StretchBlt(di->hDC, tx, ty, tw, th,
+                               hdc_mem, 0, 0,
+                               ctx->thumb_w, ctx->thumb_h, SRCCOPY);
+                    SelectObject(hdc_mem, old_bm);
+                    DeleteDC(hdc_mem);
+
+                    /* Thin border around thumbnail */
+                    HPEN tp = CreatePen(PS_SOLID, 1, CLR_BORDER);
+                    HPEN otp = (HPEN)SelectObject(di->hDC, tp);
+                    HBRUSH nb = (HBRUSH)GetStockObject(NULL_BRUSH);
+                    HBRUSH onb = (HBRUSH)SelectObject(di->hDC, nb);
+                    Rectangle(di->hDC, tx, ty, tx + tw, ty + th);
+                    SelectObject(di->hDC, otp);
+                    SelectObject(di->hDC, onb);
+                    DeleteObject(tp);
+
+                    tx += tw + sdpi(ctx, 8);
+                }
+
+                /* Text label */
+                wchar_t buf[256];
+                SendMessageW(di->hwndItem, CB_GETLBTEXT,
+                             di->itemID, (LPARAM)buf);
+                SetTextColor(di->hDC, CLR_TEXT);
+                SetBkMode(di->hDC, TRANSPARENT);
+                SelectObject(di->hDC, ctx->theme.ui_font);
+                RECT tr = di->rcItem;
+                tr.left = tx;
+                DrawTextW(di->hDC, buf, -1, &tr,
+                          DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            }
+            return TRUE;
+        }
+
+        /* ── Owner-draw buttons ──────────────────────────────── */
         if (di->CtlType == ODT_BUTTON) {
-            /* Use accent colour for the Record/Stop button */
             BOOL is_primary = (di->CtlID == IDC_REC_STARTSTOP);
             BOOL hover   = (ctx->theme.hover_btn == di->hwndItem);
             BOOL pressed = (di->itemState & ODS_SELECTED);
@@ -420,7 +706,6 @@ static LRESULT CALLBACK recctl_proc(HWND hw, UINT msg,
                 bg = CLR_BTN_SEC_PRESS;
                 border = CLR_BORDER;
             } else if (is_primary) {
-                /* Red for stop, accent for record */
                 COLORREF base = (ctx->state != RS_IDLE)
                                 ? CLR_REC_ACTIVE : CLR_ACCENT;
                 COLORREF hov  = (ctx->state != RS_IDLE)
@@ -440,20 +725,19 @@ static LRESULT CALLBACK recctl_proc(HWND hw, UINT msg,
 
             FillRect(di->hDC, &di->rcItem, ctx->theme.br_bg);
 
-            HBRUSH br  = CreateSolidBrush(bg);
-            HPEN   pen = CreatePen(PS_SOLID, 1, border);
-            HBRUSH obr = (HBRUSH)SelectObject(di->hDC, br);
-            HPEN   opn = (HPEN)SelectObject(di->hDC, pen);
+            HBRUSH bbr = CreateSolidBrush(bg);
+            HPEN   bpn = CreatePen(PS_SOLID, 1, border);
+            HBRUSH obr = (HBRUSH)SelectObject(di->hDC, bbr);
+            HPEN   opn = (HPEN)SelectObject(di->hDC, bpn);
             RoundRect(di->hDC,
                       di->rcItem.left, di->rcItem.top,
                       di->rcItem.right, di->rcItem.bottom,
                       s, s);
             SelectObject(di->hDC, obr);
             SelectObject(di->hDC, opn);
-            DeleteObject(br);
-            DeleteObject(pen);
+            DeleteObject(bbr);
+            DeleteObject(bpn);
 
-            /* Label */
             SetTextColor(di->hDC,
                          disabled ? CLR_TEXT_DIM : CLR_TEXT);
             SetBkMode(di->hDC, TRANSPARENT);
@@ -468,20 +752,82 @@ static LRESULT CALLBACK recctl_proc(HWND hw, UINT msg,
         break;
     }
 
-    /* ── Dark colour for labels / checkbox ─────────────────────── */
+    /* ── Dark colour for labels / checkbox / edit ───────────────── */
     case WM_CTLCOLORSTATIC:
         return theme_handle_ctlcolorstatic(&ctx->theme,
                                             (HDC)wp, (HWND)lp);
+
+    case WM_CTLCOLOREDIT: {
+        HDC hdc_edit = (HDC)wp;
+        SetTextColor(hdc_edit, CLR_TEXT);
+        SetBkColor(hdc_edit, CLR_INPUT_BG);
+        return (LRESULT)ctx->theme.br_input;
+    }
+
+    case WM_CTLCOLORLISTBOX:
+        return theme_handle_ctlcolorlistbox(&ctx->theme, (HDC)wp);
 
     /* ── Commands ──────────────────────────────────────────────── */
     case WM_COMMAND:
         switch (LOWORD(wp)) {
 
+        /* ── Source combo selection changed ──────────────────── */
+        case IDC_REC_SOURCE:
+            if (HIWORD(wp) == CBN_SELCHANGE && ctx->state == RS_IDLE) {
+                int sel = (int)SendDlgItemMessageW(
+                    hw, IDC_REC_SOURCE, CB_GETCURSEL, 0, 0);
+                if (sel < 0) sel = 0;
+                ctx->sel_mode = sel;
+
+                if (sel < ctx->params->nmons) {
+                    /* A full-screen monitor */
+                    ctx->cur_rect = ctx->params->monitors[sel].rect;
+                    toggle_custom_fields(hw, ctx, FALSE);
+                } else {
+                    /* Custom – read current edit values */
+                    toggle_custom_fields(hw, ctx, TRUE);
+                    read_custom_fields(hw, ctx);
+                }
+                build_info(ctx);
+                InvalidateRect(hw, NULL, TRUE);
+            }
+            return 0;
+
+        /* ── Custom-rect edits changed ─────────────────────────── */
+        case IDC_REC_CUSTOM_X:
+        case IDC_REC_CUSTOM_Y:
+        case IDC_REC_CUSTOM_W:
+        case IDC_REC_CUSTOM_H:
+            if (HIWORD(wp) == EN_CHANGE && ctx->custom_vis) {
+                read_custom_fields(hw, ctx);
+                build_info(ctx);
+                InvalidateRect(hw, NULL, TRUE);
+            }
+            return 0;
+
+        /* ── Preview button – toggle rect overlay ──────────────── */
+        case IDC_REC_PREVIEW:
+            if (rectview_visible()) {
+                rectview_dismiss();
+            } else {
+                if (ctx->custom_vis) {
+                    read_custom_fields(hw, ctx);
+                    build_info(ctx);
+                    InvalidateRect(hw, NULL, TRUE);
+                }
+                rectview_show(ctx->params->hi, &ctx->cur_rect, hw);
+            }
+            return 0;
+
         case IDC_REC_STARTSTOP:
             if (ctx->state == RS_IDLE) {
+                /* If custom mode, finalise rect from edit fields */
+                if (ctx->sel_mode >= ctx->params->nmons)
+                    read_custom_fields(hw, ctx);
+
                 /* Start recording */
                 ctx->rec = recorder_create(
-                    &ctx->params->capture_rect,
+                    &ctx->cur_rect,
                     ctx->params->output_u8,
                     ctx->params->fps,
                     ctx->params->audio_u8,
@@ -490,7 +836,7 @@ static LRESULT CALLBACK recctl_proc(HWND hw, UINT msg,
                 if (!ctx->rec && ctx->params->audio_u8) {
                     /* Retry without audio */
                     ctx->rec = recorder_create(
-                        &ctx->params->capture_rect,
+                        &ctx->cur_rect,
                         ctx->params->output_u8,
                         ctx->params->fps,
                         NULL,
@@ -559,6 +905,29 @@ static LRESULT CALLBACK recctl_proc(HWND hw, UINT msg,
         }
         break;
 
+    /* ── Overlay moved / resized → update custom fields ────────── */
+    case WM_RECTVIEW_CHANGED: {
+        const RECT *nr = (const RECT *)lp;
+        if (nr) {
+            ctx->cur_rect = *nr;
+            /* Push values into the edit controls (if visible) */
+            if (ctx->custom_vis) {
+                wchar_t buf[32];
+                swprintf(buf, 32, L"%d", (int)nr->left);
+                SetDlgItemTextW(hw, IDC_REC_CUSTOM_X, buf);
+                swprintf(buf, 32, L"%d", (int)nr->top);
+                SetDlgItemTextW(hw, IDC_REC_CUSTOM_Y, buf);
+                swprintf(buf, 32, L"%d", (int)(nr->right - nr->left));
+                SetDlgItemTextW(hw, IDC_REC_CUSTOM_W, buf);
+                swprintf(buf, 32, L"%d", (int)(nr->bottom - nr->top));
+                SetDlgItemTextW(hw, IDC_REC_CUSTOM_H, buf);
+            }
+            build_info(ctx);
+            InvalidateRect(hw, NULL, TRUE);
+        }
+        return 0;
+    }
+
     case WM_CLOSE:
         if (ctx->state == RS_STARTING || ctx->state == RS_RECORDING ||
             ctx->state == RS_PAUSED) {
@@ -582,6 +951,10 @@ static LRESULT CALLBACK recctl_proc(HWND hw, UINT msg,
 
         EnumChildWindows(hw, destroy_children_cb, 0);
         ctx->theme.dpi = HIWORD(wp);
+        ctx->thumb_w = dpi_scale(64, ctx->theme.dpi);
+        ctx->thumb_h = dpi_scale(36, ctx->theme.dpi);
+        free_thumbnails(ctx);
+        capture_thumbnails(ctx);
         theme_create_fonts(&ctx->theme);
         build_ui(hw, (HINSTANCE)GetWindowLongPtrW(hw, GWLP_HINSTANCE),
                  ctx);
@@ -590,6 +963,7 @@ static LRESULT CALLBACK recctl_proc(HWND hw, UINT msg,
     }
 
     case WM_DESTROY:
+        rectview_dismiss();
         UnregisterHotKey(hw, HOTKEY_REC_TOGGLE);
         UnregisterHotKey(hw, HOTKEY_REC_PAUSE);
         KillTimer(hw, REC_TICK_TIMER);
@@ -600,6 +974,7 @@ static LRESULT CALLBACK recctl_proc(HWND hw, UINT msg,
             recorder_destroy(ctx->rec);
             ctx->rec = NULL;
         }
+        free_thumbnails(ctx);
         theme_destroy(&ctx->theme);
         PostQuitMessage(0);
         return 0;
@@ -629,12 +1004,30 @@ int recctl_run(const RecCtlParams *params)
 
     RecCtlCtx ctx;
     ZeroMemory(&ctx, sizeof(ctx));
-    ctx.params   = params;
-    ctx.state    = RS_IDLE;
-    ctx.blink_on = TRUE;
+    ctx.params    = params;
+    ctx.state     = RS_IDLE;
+    ctx.blink_on  = TRUE;
     ctx.mouse_cap = !params->no_mouse;
+    ctx.sel_mode  = params->screen_index;
+    ctx.cur_rect  = params->capture_rect;
+    ctx.thumb_w   = 64;
+    ctx.thumb_h   = 36;
+    capture_thumbnails(&ctx);
 
-    CursorWindowPos wp = center_on_cursor(440, 195);
+    CursorWindowPos wp = center_on_cursor(440, 200);
+
+    /* center_on_cursor treats base_h as total window size, but we need
+       200 as *client* height.  Adjust for the title bar / borders. */
+    {
+        DWORD style   = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU
+                        | WS_MINIMIZEBOX;
+        int client_h  = MulDiv(200, (int)wp.dpi, 96);
+        RECT adj      = {0, 0, wp.w, client_h};
+        AdjustWindowRectEx(&adj, style, FALSE, WS_EX_TOPMOST);
+        int real_h = adj.bottom - adj.top;
+        wp.y -= (real_h - wp.h) / 2;   /* re-center vertically */
+        wp.h  = real_h;
+    }
 
     HWND hw = CreateWindowExW(
         WS_EX_TOPMOST,

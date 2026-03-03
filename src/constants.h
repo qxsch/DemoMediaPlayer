@@ -72,6 +72,20 @@
 #define HOTKEY_REC_TOGGLE 1                /* Ctrl+F9  start/stop   */
 #define HOTKEY_REC_PAUSE  2                /* Ctrl+F10 pause/resume */
 
+/* Recording source selection controls */
+#define IDC_REC_SOURCE     310  /* combo box – screen / custom      */
+#define IDC_REC_CUSTOM_X   311  /* edit – custom rect X             */
+#define IDC_REC_CUSTOM_Y   312  /* edit – custom rect Y             */
+#define IDC_REC_CUSTOM_W   313  /* edit – custom rect W             */
+#define IDC_REC_CUSTOM_H   314  /* edit – custom rect H             */
+#define IDC_REC_PREVIEW    315  /* button – show rect overlay       */
+
+/* Rectangle preview overlay (rectview.c) */
+#define RECTVIEW_CLASS    L"DMP_RectView"
+#define RECTVIEW_TIMER    3
+#define RECTVIEW_TIMEOUT  3000  /* ms – auto-dismiss */
+#define WM_RECTVIEW_CHANGED (WM_USER + 20)  /* overlay moved/resized  */
+
 #define CLR_REC_ACTIVE    RGB(220, 38, 38)    /* red indicator    */
 #define CLR_REC_PAUSED    RGB(250, 190, 50)   /* amber / paused   */
 #define CLR_REC_INACTIVE  RGB(80, 80, 80)     /* gray indicator   */
